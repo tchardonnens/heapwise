@@ -7,12 +7,14 @@ use pyo3::prelude::*;
 
 mod analysis;
 mod hooks;
+mod native;
 mod recorder;
 mod report;
 
 pub use analysis::Capture;
 
-/// Start recording Python heap allocations.
+/// Start recording heap allocations: CPython's allocators everywhere, plus
+/// malloc/mmap from native code where the platform is supported.
 ///
 /// `sample_rate` is the mean number of bytes between samples; 0 records every
 /// allocation.
@@ -25,6 +27,7 @@ fn start(sample_rate: u64) -> PyResult<()> {
     recorder::begin();
     hooks::SAMPLE_RATE.store(sample_rate, Ordering::SeqCst);
     unsafe { hooks::install() };
+    hooks::NATIVE.store(native::install(), Ordering::SeqCst);
     hooks::ACTIVE.store(true, Ordering::SeqCst);
     Ok(())
 }
@@ -35,9 +38,11 @@ fn stop() -> PyResult<Capture> {
     if !hooks::ACTIVE.swap(false, Ordering::SeqCst) {
         return Err(PyRuntimeError::new_err("heapwise is not recording"));
     }
+    native::uninstall();
     unsafe { hooks::uninstall() };
     let rate = hooks::SAMPLE_RATE.load(Ordering::SeqCst);
-    unsafe { recorder::finish(rate) }.ok_or_else(|| PyRuntimeError::new_err("no capture in progress"))
+    let native = hooks::NATIVE.load(Ordering::SeqCst);
+    unsafe { recorder::finish(rate, native) }.ok_or_else(|| PyRuntimeError::new_err("no capture in progress"))
 }
 
 #[pyfunction]

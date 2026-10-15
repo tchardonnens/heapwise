@@ -17,7 +17,7 @@ def test_peak_is_attributed_to_the_allocating_function():
         del blocks
     cap = result[0]
     assert 10 * MiB <= cap.peak_bytes < 12 * MiB
-    func, file, line, nbytes, count = cap.top("peak", [], 1)[0]
+    func, file, line, nbytes, count, _native = cap.top("peak", [], 1)[0]
     assert func == "<listcomp>" or func.endswith("allocate_blocks")
     assert file == __file__
     assert nbytes >= 10 * MiB
