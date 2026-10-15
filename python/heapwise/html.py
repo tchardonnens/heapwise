@@ -194,9 +194,23 @@ label { color: var(--muted); font-size: 13px; cursor: pointer; user-select: none
 table { width: 100%; border-collapse: collapse; }
 th { text-align: right; font-weight: 500; color: var(--muted); font-size: 12px; padding: 4px 8px; border-bottom: 1px solid var(--line); }
 th:last-child, td:last-child { text-align: left; width: 100%; }
-td { text-align: right; padding: 2px 8px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+td { text-align: right; padding: 0 8px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+td > .c { padding: 2px 0; overflow: hidden; max-height: 24px; }
+tr.enter td > .c { animation: row-in 180ms ease-out both; animation-delay: var(--delay, 0ms); }
+tr.leave td > .c { animation: row-out 150ms ease-in both; }
+@keyframes row-in { from { max-height: 0; padding: 0; opacity: 0; transform: translateY(-4px); } }
+@keyframes row-out { to { max-height: 0; padding: 0; opacity: 0; } }
+.fn.anim { transition: left 260ms ease, width 260ms ease, top 260ms ease, opacity 200ms ease; }
+.fn.fade { opacity: 0; }
+.fade-in { animation: fade-in 200ms ease-out both; }
+@keyframes fade-in { from { opacity: 0.25; } }
+@media (prefers-reduced-motion: reduce) {
+  tr.enter td > .c, tr.leave td > .c, .fade-in { animation: none; }
+  .fn.anim, .tw { transition: none; }
+}
 tr.row:hover { background: var(--hover); }
-.tw { cursor: pointer; display: inline-block; width: 14px; color: var(--muted); }
+.tw { cursor: pointer; display: inline-block; width: 14px; text-align: center; color: var(--muted); transition: transform 180ms ease; }
+.tw.open { transform: rotate(90deg); }
 .lib { color: var(--muted); }
 .loc2 { color: var(--muted); margin-left: 8px; }
 .bar { display: inline-block; height: 8px; background: var(--accent); border-radius: 2px; vertical-align: 0; margin-right: 6px; opacity: 0.7; }
@@ -360,7 +374,7 @@ function drawTabs() {
     b.setAttribute("role", "tab");
     b.setAttribute("aria-selected", String(k === state.view));
     if (D.views[k] === null) { b.disabled = true; b.title = "Run with --exact to count temporaries"; }
-    b.onclick = () => { state.view = k; state.zoom = []; render(); };
+    b.onclick = () => { state.view = k; state.zoom = []; render(); fadeIn(); };
     tabs.appendChild(b);
   }
 }
@@ -386,9 +400,18 @@ function nodeAt(root, ids) {
   return n;
 }
 
+// Set by zoom clicks: boxes then glide from where they were to where they go.
+let animateZoom = false;
 function drawFlame(root) {
   const el = document.getElementById("flame");
   const crumbs = document.getElementById("crumbs");
+  const before = new Map();
+  if (animateZoom && !reduceMotion()) {
+    for (const b of el.querySelectorAll(".fn[data-k]")) {
+      before.set(b.dataset.k, [b.style.left, b.style.width, b.style.top]);
+    }
+  }
+  animateZoom = false;
   el.innerHTML = "";
   if (!root.total) {
     el.innerHTML = `<div class="empty">Nothing in this view.</div>`;
@@ -400,7 +423,9 @@ function drawFlame(root) {
   crumbs.innerHTML = state.zoom.length
     ? `<a data-z="0">all</a>` + state.zoom.map((id, i) => ` › <a data-z="${i + 1}">${esc(frameInfo(id).func)}</a>`).join("")
     : "Click a box to zoom in.";
-  crumbs.querySelectorAll("a").forEach(a => { a.onclick = () => { state.zoom = state.zoom.slice(0, +a.dataset.z); render(); }; });
+  crumbs.querySelectorAll("a").forEach(a => {
+    a.onclick = () => { state.zoom = state.zoom.slice(0, +a.dataset.z); animateZoom = true; render(); };
+  });
 
   const W = el.clientWidth || 800, RH = 20;
   let depth = 0;
@@ -411,13 +436,14 @@ function drawFlame(root) {
     const f = frameInfo(node.id);
     const div = document.createElement("div");
     div.className = "fn" + (dim ? " dim" : "");
+    div.dataset.k = key(path);
     div.style.left = x + "px"; div.style.top = d * RH + "px"; div.style.width = Math.max(w, 1) + "px";
     const hue = f.synth ? "var(--synthetic)" : f.mine ? (d % 2 ? "var(--mine)" : "var(--mine-2)") : (d % 2 ? "var(--lib)" : "var(--lib-2)");
     div.style.background = hue;
     if (w > 30) div.textContent = f.func;
     div.onmousemove = e => showTip(e, node, root.total);
     div.onmouseleave = () => { tip.style.display = "none"; };
-    div.onclick = () => { state.zoom = path; tip.style.display = "none"; render(); };
+    div.onclick = () => { state.zoom = path; tip.style.display = "none"; animateZoom = true; render(); };
     frag.appendChild(div);
     placeKids(node, x, w, d + 1, path);
   };
@@ -437,6 +463,7 @@ function drawFlame(root) {
       depth = Math.max(depth, d + 1);
       const div = document.createElement("div");
       div.className = "fn";
+      div.dataset.k = key(path) + "/more";
       div.style.left = cx + "px"; div.style.top = d * RH + "px"; div.style.width = Math.max(rw, 1) + "px";
       div.style.background = "var(--synthetic)"; div.style.cursor = "default";
       const label = `${fmtCount(restN)} more`;
@@ -464,6 +491,21 @@ function drawFlame(root) {
   }
   el.appendChild(frag);
   el.style.height = depth * RH + "px";
+  if (before.size) {
+    const boxes = [...el.querySelectorAll(".fn")];
+    const target = boxes.map(b => [b.style.left, b.style.width, b.style.top]);
+    boxes.forEach(b => {
+      const old = before.get(b.dataset.k);
+      if (old) [b.style.left, b.style.width, b.style.top] = old;
+      else b.classList.add("fade");
+    });
+    void el.offsetWidth; // commit the starting positions before transitioning
+    boxes.forEach((b, i) => {
+      b.classList.add("anim");
+      b.classList.remove("fade");
+      [b.style.left, b.style.width, b.style.top] = target[i];
+    });
+  }
 }
 
 // ---- call tree ----
@@ -480,7 +522,8 @@ function autoOpen(root) {
   };
   walk(root, [], 0);
 }
-function drawTree(root) {
+// `enter`: key of a row just expanded; its new descendants animate in.
+function drawTree(root, enter) {
   const t = document.getElementById("tree");
   const bytes = VIEWS[state.view].unit === "bytes";
   let html = `<tr><th>Total</th><th>%</th><th>Here</th>${bytes ? "<th>Native</th>" : ""}<th>Function</th></tr>`;
@@ -498,27 +541,54 @@ function drawTree(root) {
     if (restN) rows.push([{ more: restN, total: rest }, path, d]);
   };
   walk(root, [], 0);
+  const cell = (inner, attrs = "") => `<td${attrs}><div class="c">${inner}</div></td>`;
+  // Rows under the just-expanded one slide in, slightly staggered.
+  let entering = 0;
+  const enterAttrs = (p, cls) => {
+    if (enter === undefined || !key(p).startsWith(enter + "/")) return cls ? ` class="${cls}"` : "";
+    return ` class="${cls ? cls + " " : ""}enter" style="--delay:${Math.min(entering++, 12) * 12}ms"`;
+  };
   for (const [k, p, d] of rows) {
     if (k.more) {
-      html += `<tr><td>${fmt(k.total)}</td><td>${(100 * k.total / root.total).toFixed(1)}%</td><td></td>${bytes ? "<td></td>" : ""}` +
-        `<td class="lib" style="padding-left:${22 + d * 16}px">${fmtCount(k.more)} more, each smaller</td></tr>`;
+      html += `<tr${enterAttrs([...p, "more"], "")} data-parent="${esc(key(p))}">${cell(fmt(k.total))}${cell(`${(100 * k.total / root.total).toFixed(1)}%`)}${cell("")}${bytes ? cell("") : ""}` +
+        cell(`${fmtCount(k.more)} more, each smaller`, ` class="lib" style="padding-left:${22 + d * 16}px"`) + `</tr>`;
       continue;
     }
     const f = frameInfo(k.id);
     const pct = 100 * k.total / root.total;
-    const tw = k.kids.size ? (open.has(key(p)) ? "▾" : "▸") : "";
-    html += `<tr class="row" data-k="${esc(key(p))}"><td>${fmt(k.total)}</td>` +
-      `<td><span class="bar" style="width:${Math.max(1, pct * 0.4)}px"></span>${pct.toFixed(1)}%</td>` +
-      `<td>${k.self ? fmt(k.self) : ""}</td>` +
-      (bytes ? `<td>${k.native ? fmtBytes(k.native) : ""}</td>` : "") +
-      `<td class="mono" style="padding-left:${8 + d * 16}px"><span class="tw">${tw}</span>` +
-      `<span class="${f.mine ? "" : "lib"}">${esc(f.func)}</span><span class="loc2">${esc(f.loc)}</span></td></tr>`;
+    const isOpen = open.has(key(p));
+    const tw = k.kids.size ? `<span class="tw${isOpen ? " open" : ""}">▸</span>` : `<span class="tw"></span>`;
+    html += `<tr${enterAttrs(p, "row")} data-k="${esc(key(p))}">${cell(fmt(k.total))}` +
+      cell(`<span class="bar" style="width:${Math.max(1, pct * 0.4)}px"></span>${pct.toFixed(1)}%`) +
+      cell(k.self ? fmt(k.self) : "") +
+      (bytes ? cell(k.native ? fmtBytes(k.native) : "") : "") +
+      cell(`${tw}<span class="${f.mine ? "" : "lib"}">${esc(f.func)}</span><span class="loc2">${esc(f.loc)}</span>`,
+        ` class="mono" style="padding-left:${8 + d * 16}px"`) + `</tr>`;
   }
   t.innerHTML = html;
   t.querySelectorAll("tr.row").forEach(r => {
-    r.onclick = () => { const k = r.dataset.k; open.has(k) ? open.delete(k) : open.add(k); drawTree(root); };
+    r.onclick = () => {
+      const k = r.dataset.k;
+      if (!open.has(k)) {
+        open.add(k);
+        drawTree(root, k);
+        return;
+      }
+      open.delete(k);
+      // Animate the subtree out, then redraw without it.
+      r.querySelector(".tw")?.classList.remove("open");
+      const gone = [...t.querySelectorAll("tr")].filter(x => {
+        const xk = x.dataset.k ?? x.dataset.parent;  // "N more" rows carry their parent's key
+        return xk !== undefined && (xk === k && x.dataset.parent !== undefined || xk.startsWith(k + "/"));
+      });
+      if (!gone.length || reduceMotion()) { drawTree(root); return; }
+      gone.forEach(x => x.classList.add("leave"));
+      setTimeout(() => drawTree(root), 150);
+    };
   });
 }
+
+const reduceMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 let lastTreeKey = "";
 function render() {
@@ -533,7 +603,15 @@ function render() {
   drawTree(root);
 }
 
-document.getElementById("mine").onchange = e => { state.mine = e.target.checked; state.zoom = []; render(); };
+function fadeIn() {
+  for (const id of ["flame", "tree"]) {
+    const el = document.getElementById(id);
+    el.classList.remove("fade-in");
+    void el.offsetWidth;
+    el.classList.add("fade-in");
+  }
+}
+document.getElementById("mine").onchange = e => { state.mine = e.target.checked; state.zoom = []; render(); fadeIn(); };
 let rt;
 addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(() => { drawTimeline(); render(); }, 100); });
 drawTimeline();
