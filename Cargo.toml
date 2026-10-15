@@ -1,0 +1,19 @@
+[package]
+name = "heapwise"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Native core of the heapwise Python memory profiler"
+publish = false
+
+[lib]
+name = "_native"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.25", features = ["extension-module"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+debug = 1
