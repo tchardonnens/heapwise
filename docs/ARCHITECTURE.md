@@ -46,7 +46,8 @@ python/heapwise/        thin Python layer
 src/                    Rust core (heapwise._native)
   hooks.rs              CPython allocator hooks, sampling, stack capture
   native/linux.rs       malloc/mmap interception via GOT patching (Linux)
-  recorder.rs           cheap event log + interning on the hot path
+  recorder.rs           interning + live map on the hot path
+  ledger.rs             online peak / live-at-peak / timeline accounting
   analysis.rs           peak / leaks / temporaries / timeline, after the run
   report.rs             findings-first terminal report
 ```
@@ -101,9 +102,23 @@ src/                    Rust core (heapwise._native)
 
 ### Recording (recorder.rs)
 
-heaptrack's model (do #9): each allocation/free appends a 16-byte event
-(signed bytes, stack id, native flag). Nothing is aggregated on the hot path
-except the address → (bytes, stack) map needed to attribute frees.
+Each allocation/free does O(1) work and nothing grows with the number of
+events, so a capture's memory depends on how many stacks and live blocks the
+program has, not on how long it runs (20M allocations: 18 MiB of profiler
+RSS; it was 638 MiB with the event log we started with). Per event:
+
+- the address → (bytes, stack) map needed to attribute frees;
+- the **ledger** (`ledger.rs`): per-stack live bytes/native/blocks, the
+  running total and the peak. What was live at the peak is kept lazily: a
+  stack's value at the latest peak is its value just before its first change
+  after that peak (or its current value if it hasn't changed), so a new peak
+  costs nothing and no replay is needed;
+- the **timeline**: the highest total per time slot, with slots that double
+  in width when the run outgrows 1024 of them.
+
+This trades heaptrack's replayable event log for bounded memory. Questions
+the ledger can't answer after the fact (what was live at an arbitrary time,
+diffs between two marks) come back with roadmap item 3, streamed to disk.
 
 What keeps the hot path cheap:
 
@@ -112,13 +127,12 @@ What keeps the hot path cheap:
 - **Caller cache.** Each thread remembers its last walk. When every frame but
   the innermost matches, the callers' stack id is reused and only the
   innermost frame is interned, which is the common case in a loop.
-- **Sparse clock.** The clock is read every 64 events; event times are
-  interpolated between those ticks at analysis time.
+- **Sparse clock.** The clock is read every 64 events; events in between
+  take the last reading (the peak's time is off by at most 63 events).
 
 ### Analysis (analysis.rs)
 
-- **Peak**: pass 1 finds the high-water mark, pass 2 replays up to it to get
-  what was live there.
+- **Peak**: read from the ledger; no pass over events.
 - **Leaks**: still allocated when recording stopped.
 - **Temporaries**: freed with no other allocation on the same thread in
   between (heaptrack's definition). Exact mode only.
@@ -141,8 +155,12 @@ Process RSS is printed as context only, never attributed to lines (don't #1).
 The same run also writes `heapwise-<script>.html` (`python/heapwise/html.py`,
 do #14): one self-contained file, no network, with the findings, a memory
 timeline, Peak / Leaks / Temporaries tabs, an icicle flame graph (click to
-zoom) and an expandable call tree. Rust hands over `Capture.frames()` and
-`Capture.stacks(view)` (full stacks, outermost first); the page merges frames
+zoom) and an expandable call tree. Rust hands over `Capture.frames()`,
+`Capture.stack_nodes()` (the stack trie) and `Capture.stack_values(view)`;
+the page ships the trie restricted to nodes a view uses, with file names
+listed once, so 640k stacks come to about 6 MB and render in well under a
+second. Callees too narrow to draw are one "N more" box, and the call tree
+lists at most 200 children per node with an "N more" row. The page merges frames
 on the same line and, by default, collapses code that isn't the user's: the
 launcher and runpy at the root are dropped, and each run of library frames
 keeps only the call the user made into it (do #9). Allocations made while
@@ -151,7 +169,7 @@ runpy compiles the script, before any user frame exists, are one
 
 ## Status of the scaffold
 
-Working today (Linux, CPython 3.13, 22 tests passing):
+Working today (Linux, CPython 3.13, 30 tests passing):
 
 - `heapwise run script.py` / `-m module`, exit code passed through
 - Python allocator domains incl. pymalloc, all threads
@@ -183,9 +201,10 @@ Ordered by what the research says matters most.
    layouts instead of materialising frame objects through the public API,
    which would also give GIL-released native allocations their Python stack;
    per-thread event buffers instead of one mutex, for threaded programs.
-3. **Stream to disk.** Events go to an lz4-compressed capture file as they
-   happen, so hour-long runs do not keep the log in RAM. The same run still
-   prints the summary (don't #5); the file feeds the UI and `diff`.
+3. **Stream to disk.** Memory no longer grows with run length (the online
+   ledger above). Optionally also write events to an lz4-compressed capture
+   file as they happen, for time-travel queries and `diff`. The same run
+   still prints the summary (don't #5).
 4. **Retained size and path to root** (do #12, the most requested gap). Heap
    snapshot via `gc.get_objects()` / `gc.get_referents()` from the Python
    layer, handed to Rust for a Lengauer-Tarjan dominator tree and shortest

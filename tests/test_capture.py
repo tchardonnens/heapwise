@@ -144,3 +144,55 @@ def test_peak_time_is_within_the_run():
     assert 0.04 < cap.peak_seconds < cap.duration_seconds
     tl = cap.timeline(10)
     assert len(tl) == 10 and max(tl) == cap.peak_bytes
+
+
+def _alloc_a(n):
+    return bytearray(n)
+
+
+def _alloc_b(n):
+    return bytearray(n)
+
+
+def _alloc_c(n):
+    return bytearray(n)
+
+
+def _alloc_d(n):
+    return bytearray(n)
+
+
+def _peak_sites(cap):
+    return {row[0].rsplit(".", 1)[-1]: row[3] for row in cap.top("peak", [], 20) if row[3] >= MiB}
+
+
+def test_peak_view_is_what_was_live_at_the_latest_peak():
+    # Peak 1: a + b. Freeing a and allocating c stays below it.
+    with heapwise.profile() as result:
+        a, b = _alloc_a(10 * MiB), _alloc_b(5 * MiB)
+        del a
+        c = _alloc_c(8 * MiB)
+    assert set(_peak_sites(result[0])) == {"_alloc_a", "_alloc_b"}
+    del b, c
+
+    # Peak 2 replaces it: c + d, after a and b are gone.
+    with heapwise.profile() as result:
+        a, b = _alloc_a(10 * MiB), _alloc_b(5 * MiB)
+        del a
+        c = _alloc_c(8 * MiB)
+        del b
+        d = _alloc_d(20 * MiB)
+    sites = _peak_sites(result[0])
+    assert set(sites) == {"_alloc_c", "_alloc_d"}
+    assert 28 * MiB <= result[0].peak_bytes < 29 * MiB
+    del c, d
+
+
+def test_long_runs_keep_a_bounded_timeline():
+    with heapwise.profile() as result:
+        for _ in range(200_000):
+            x = bytearray(100)
+            del x
+    tl = result[0].timeline(1000)
+    assert len(tl) == 1000
+    assert max(tl) <= result[0].peak_bytes

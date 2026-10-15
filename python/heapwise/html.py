@@ -42,22 +42,52 @@ def report_data(
             break
         findings.append(line)
     # The capture keys frames by bytecode offset; the page shows lines, so
-    # frames on the same line of the same function become one.
+    # frames on the same line of the same function become one. File names
+    # are listed once and referred to by index.
     frames: list[list] = []
+    files: list[str] = []
+    file_ids: dict[str, int] = {}
     canon: dict[tuple[str, str, int], int] = {}
     remap = []
     for func, file, line in capture.frames():
         k = (func, file, line)
         if k not in canon:
             canon[k] = len(frames)
-            frames.append([func, _short(file, cwd), line, _is_mine(file, exclude)])
+            if file not in file_ids:
+                file_ids[file] = len(files)
+                files.append(_short(file, cwd))
+            frames.append([func, file_ids[file], line, 1 if _is_mine(file, exclude) else 0])
         remap.append(canon[k])
-    views = {}
+
+    # Stacks go out as the trie the capture keeps (parent, frame per node),
+    # restricted to nodes some view needs, so the page stays small however
+    # many stacks share prefixes.
+    trie = capture.stack_nodes()
+    values = {}
     for view in _VIEWS:
         if view == "temporaries" and capture.sample_rate != 0:
-            views[view] = None  # only counted with --exact
-            continue
-        views[view] = [[[remap[i] for i in path], b, c, n] for path, b, c, n in capture.stacks(view)]
+            values[view] = None  # only counted with --exact
+        else:
+            values[view] = capture.stack_values(view)
+    needed = bytearray(len(trie))
+    needed[0] = 1
+    for rows in values.values():
+        for node, *_ in rows or ():
+            while not needed[node]:
+                needed[node] = 1
+                node = trie[node][0]
+    new_id = [0] * len(trie)
+    nodes: list[int] = []  # flat: parent, frame, parent, frame, ...
+    count = 0
+    for i, (parent, frame) in enumerate(trie):
+        if needed[i]:
+            new_id[i] = count
+            count += 1
+            nodes += (new_id[parent], remap[frame]) if i else (0, -1)
+    views = {
+        view: None if rows is None else [x for node, b, c, n in rows for x in (new_id[node], b, c, n)]
+        for view, rows in values.items()
+    }
     prefix = f"heapwise · {title} · "
     return {
         "title": title,
@@ -71,7 +101,9 @@ def report_data(
         "leaked": capture.leaked_bytes,
         "sampled": capture.sample_rate != 0,
         "timeline": capture.timeline(400),
+        "files": files,
         "frames": frames,
+        "nodes": nodes,
         "views": views,
     }
 
@@ -227,17 +259,25 @@ let state = { view: "peak", mine: true, zoom: [] };
 
 function frameInfo(id) {
   if (id < 0) return { func: SYNTH[id], loc: "", mine: false, synth: true };
-  const [func, file, line, mine] = D.frames[id];
-  return { func, loc: file ? `${file}:${line}` : "", mine, synth: false };
+  const [func, fi, line, mine] = D.frames[id];
+  const file = D.files[fi];
+  return { func, loc: file ? `${file}:${line}` : "", mine: !!mine, synth: false };
+}
+
+// Frames of a trie node, outermost first.
+function pathOf(node) {
+  const out = [];
+  while (node !== 0) { out.push(D.nodes[2 * node + 1]); node = D.nodes[2 * node]; }
+  return out.reverse();
 }
 
 // Keep your frames; of each run of library frames keep only its outermost
 // one (the call you made into the library); drop the launcher at the root.
 function collapse(path) {
   if (!path.length) return [NO_STACK];
-  const mine = path.map(id => D.frames[id][3]);
+  const mine = path.map(id => D.frames[id][3] === 1);
   if (!mine.some(Boolean)) {
-    const startup = path.some(id => /(^<frozen runpy>$|[\\/]runpy\.py$)/.test(D.frames[id][1]));
+    const startup = path.some(id => /(^<frozen runpy>$|[\\/]runpy\.py$)/.test(D.files[D.frames[id][1]]));
     return [startup ? STARTUP : OUTSIDE, path[path.length - 1]];
   }
   const out = [];
@@ -249,12 +289,14 @@ function collapse(path) {
 }
 
 function buildTree() {
-  const stacks = D.views[state.view] || [];
+  const flat = D.views[state.view] || [];
   const unitBytes = VIEWS[state.view].unit === "bytes";
   const root = { id: null, total: 0, self: 0, native: 0, kids: new Map() };
-  for (const [path0, bytes, count, native] of stacks) {
+  for (let i = 0; i < flat.length; i += 4) {
+    const bytes = flat[i + 1], count = flat[i + 2], native = flat[i + 3];
     const v = unitBytes ? bytes : count;
     if (!v) continue;
+    const path0 = pathOf(flat[i]);
     const path = state.mine ? collapse(path0) : (path0.length ? path0 : [NO_STACK]);
     let node = root;
     node.total += v; node.native += native;
@@ -377,11 +419,36 @@ function drawFlame(root) {
     div.onmouseleave = () => { tip.style.display = "none"; };
     div.onclick = () => { state.zoom = path; tip.style.display = "none"; render(); };
     frag.appendChild(div);
-    let cx = x;
+    placeKids(node, x, w, d + 1, path);
+  };
+  // Children too narrow to see are drawn as one "N more" box, so a node
+  // with thousands of small callees still shows where its memory went.
+  const placeKids = (node, x, w, d, path) => {
+    let cx = x, rest = 0, restN = 0;
     for (const k of sortedKids(node)) {
       const kw = w * k.total / node.total;
-      place(k, cx, kw, d + 1, [...path, k.id], false);
+      if (kw < 3) { rest += k.total; restN++; continue; }
+      place(k, cx, kw, d, [...path, k.id], false);
       cx += kw;
+    }
+    if (restN && rest) {
+      const rw = w * rest / node.total;
+      if (rw < 0.5) return;
+      depth = Math.max(depth, d + 1);
+      const div = document.createElement("div");
+      div.className = "fn";
+      div.style.left = cx + "px"; div.style.top = d * RH + "px"; div.style.width = Math.max(rw, 1) + "px";
+      div.style.background = "var(--synthetic)"; div.style.cursor = "default";
+      const label = `${fmtCount(restN)} more`;
+      if (rw > 30) div.textContent = label;
+      div.onmousemove = e => {
+        tip.innerHTML = `<b>${label}</b>, each too small to draw<br>${fmt(rest)} (${(100 * rest / root.total).toFixed(1)}%) in total` +
+          `<br><span class="loc">listed in the call tree below</span>`;
+        tip.style.display = "block";
+        tip.style.left = Math.min(e.clientX + 12, innerWidth - 300) + "px"; tip.style.top = e.clientY + 14 + "px";
+      };
+      div.onmouseleave = () => { tip.style.display = "none"; };
+      frag.appendChild(div);
     }
   };
   // Ancestors of the zoomed node fill the width, dimmed.
@@ -391,8 +458,7 @@ function drawFlame(root) {
     if (i > 0) { place({ ...anc, kids: new Map() }, 0, W, d++, state.zoom.slice(0, i), true); }
   }
   if (focus === root) {
-    let cx = 0;
-    for (const k of sortedKids(root)) { const kw = W * k.total / root.total; place(k, cx, kw, d, [k.id], false); cx += kw; }
+    placeKids(root, 0, W, d, []);
   } else {
     place(focus, 0, W, d, state.zoom.slice(), false);
   }
@@ -421,15 +487,23 @@ function drawTree(root) {
   if (!root.total) { t.innerHTML = html; return; }
   const rows = [];
   const walk = (n, path, d) => {
+    let shown = 0, rest = 0, restN = 0;
     for (const k of sortedKids(n)) {
       const p = [...path, k.id];
-      if (k.total / root.total < 0.001 && d > 0) continue;
+      if (shown >= 200 || (k.total / root.total < 0.001 && shown >= 10)) { rest += k.total; restN++; continue; }
+      shown++;
       rows.push([k, p, d]);
       if (open.has(key(p))) walk(k, p, d + 1);
     }
+    if (restN) rows.push([{ more: restN, total: rest }, path, d]);
   };
   walk(root, [], 0);
   for (const [k, p, d] of rows) {
+    if (k.more) {
+      html += `<tr><td>${fmt(k.total)}</td><td>${(100 * k.total / root.total).toFixed(1)}%</td><td></td>${bytes ? "<td></td>" : ""}` +
+        `<td class="lib" style="padding-left:${22 + d * 16}px">${fmtCount(k.more)} more, each smaller</td></tr>`;
+      continue;
+    }
     const f = frameInfo(k.id);
     const pct = 100 * k.total / root.total;
     const tw = k.kids.size ? (open.has(key(p)) ? "▾" : "▸") : "";
