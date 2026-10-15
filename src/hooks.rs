@@ -1,4 +1,5 @@
-//! Allocator interception.
+//! Allocator interception for CPython's own allocators, and the shared
+//! entry points (`on_alloc`, `on_free`) the native hooks report to.
 //!
 //! We wrap CPython's three allocator domains (RAW, MEM, OBJ) with
 //! `PyMem_SetAllocator`, the same mechanism tracemalloc uses. Because the OBJ
@@ -23,6 +24,9 @@ use crate::recorder;
 pub const MAX_DEPTH: usize = 64;
 
 pub static ACTIVE: AtomicBool = AtomicBool::new(false);
+/// Whether native allocation hooks are installed for this capture.
+pub static NATIVE: AtomicBool = AtomicBool::new(false);
+static RECORDED: AtomicU64 = AtomicU64::new(0);
 /// Mean bytes between samples; 0 records every allocation.
 pub static SAMPLE_RATE: AtomicU64 = AtomicU64::new(0);
 
@@ -34,11 +38,22 @@ thread_local! {
     static LAST_ALLOC: Cell<usize> = const { Cell::new(0) };
 }
 
+/// Where an allocation came from.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Source {
+    /// PyMem RAW domain: may be called without the GIL.
+    PyRaw,
+    /// PyMem MEM and OBJ domains (pymalloc): always with the GIL.
+    PyMem,
+    /// malloc/mmap from C extensions and their libraries: any thread.
+    Native,
+}
+
 #[repr(C)]
 struct DomainCtx {
     orig: ffi::PyMemAllocatorEx,
     domain: ffi::PyMemAllocatorDomain,
-    is_raw: bool,
+    source: Source,
 }
 
 static mut CTXS: [*mut DomainCtx; 3] = [std::ptr::null_mut(); 3];
@@ -62,7 +77,7 @@ pub unsafe fn install() {
         ffi::PyMem_GetAllocator(domain, &mut orig);
         // Leaked on purpose: another thread may still be inside a hook using
         // this context after we uninstall.
-        let ctx = Box::into_raw(Box::new(DomainCtx { orig, domain, is_raw: i == 0 }));
+        let ctx = Box::into_raw(Box::new(DomainCtx { orig, domain, source: if i == 0 { Source::PyRaw } else { Source::PyMem } }));
         CTXS[i] = ctx;
         let mut ours = ffi::PyMemAllocatorEx {
             ctx: ctx as *mut c_void,
@@ -91,7 +106,7 @@ extern "C" fn hw_malloc(ctx: *mut c_void, size: usize) -> *mut c_void {
         let d = &*(ctx as *const DomainCtx);
         let p = (d.orig.malloc.unwrap_unchecked())(d.orig.ctx, size);
         if !p.is_null() {
-            on_alloc(d.is_raw, p as usize, size);
+            on_alloc(d.source, p as usize, size);
         }
         p
     }
@@ -102,7 +117,7 @@ extern "C" fn hw_calloc(ctx: *mut c_void, nelem: usize, elsize: usize) -> *mut c
         let d = &*(ctx as *const DomainCtx);
         let p = (d.orig.calloc.unwrap_unchecked())(d.orig.ctx, nelem, elsize);
         if !p.is_null() {
-            on_alloc(d.is_raw, p as usize, nelem.saturating_mul(elsize));
+            on_alloc(d.source, p as usize, nelem.saturating_mul(elsize));
         }
         p
     }
@@ -118,7 +133,7 @@ extern "C" fn hw_realloc(ctx: *mut c_void, ptr: *mut c_void, size: usize) -> *mu
         }
         let p = (d.orig.realloc.unwrap_unchecked())(d.orig.ctx, ptr, size);
         if !p.is_null() {
-            on_alloc(d.is_raw, p as usize, size);
+            on_alloc(d.source, p as usize, size);
         }
         p
     }
@@ -188,7 +203,13 @@ fn sample(size: usize) -> Option<u64> {
     })
 }
 
-unsafe fn on_alloc(is_raw: bool, addr: usize, size: usize) {
+/// Child processes stop recording: the parent's recorder lock may have been
+/// held by another thread at fork time.
+pub unsafe extern "C" fn after_fork_in_child() {
+    ACTIVE.store(false, Ordering::SeqCst);
+}
+
+pub unsafe fn on_alloc(source: Source, addr: usize, size: usize) {
     if !ACTIVE.load(Ordering::Relaxed) {
         return;
     }
@@ -197,13 +218,18 @@ unsafe fn on_alloc(is_raw: bool, addr: usize, size: usize) {
     }
     if let Some(bytes) = sample(size) {
         let mut frames: [(usize, i32); MAX_DEPTH] = [(0, 0); MAX_DEPTH];
-        let depth = if is_raw && ffi::PyGILState_Check() == 0
+        let depth = if source != Source::PyMem && ffi::PyGILState_Check() == 0
         {
             0
         } else {
             walk_python_stack(&mut frames)
         };
-        recorder::record_alloc(addr, bytes, &frames[..depth]);
+        // Raw-domain blocks are buffers requested by C code (numpy arrays use
+        // PyMem_RawMalloc), so they count as native alongside malloc/mmap.
+        recorder::record_alloc(addr, bytes, &frames[..depth], source != Source::PyMem);
+        if RECORDED.fetch_add(1, Ordering::Relaxed).is_multiple_of(1024) && NATIVE.load(Ordering::Relaxed) {
+            crate::native::poll();
+        }
         if SAMPLE_RATE.load(Ordering::Relaxed) == 0 {
             LAST_ALLOC.with(|l| l.set(addr));
         }
@@ -213,7 +239,7 @@ unsafe fn on_alloc(is_raw: bool, addr: usize, size: usize) {
     IN_HOOK.with(|g| g.set(false));
 }
 
-fn on_free(addr: usize) {
+pub fn on_free(addr: usize) {
     if !ACTIVE.load(Ordering::Relaxed) {
         return;
     }

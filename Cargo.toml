@@ -11,6 +11,7 @@ name = "_native"
 crate-type = ["cdylib"]
 
 [dependencies]
+libc = "0.2"
 pyo3 = { version = "0.25", features = ["extension-module"] }
 
 [profile.release]

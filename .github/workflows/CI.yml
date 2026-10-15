@@ -174,15 +174,16 @@ jobs:
         with:
           name: wheels-windows-${{ matrix.platform.target }}
           path: dist
-      - uses: astral-sh/setup-uv@v7
       - name: pytest
         shell: bash
+        # Use setup-python's interpreter so the venv matches the wheel's
+        # architecture (uv picked a 64-bit Python for the x86 wheel).
         run: |
           set -e
-          uv venv .venv
+          python -m venv .venv
           source .venv/Scripts/activate
-          uv pip install heapwise --no-index --no-deps --find-links dist --reinstall
-          uv pip install heapwise pytest
+          python -m pip install heapwise --no-index --no-deps --find-links dist --force-reinstall
+          python -m pip install pytest
           pytest
 
   macos:

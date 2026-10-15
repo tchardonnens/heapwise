@@ -10,7 +10,7 @@ use std::time::Instant;
 
 use pyo3::ffi;
 
-use crate::analysis::{Capture, Event, Frame};
+use crate::analysis::{Agg, Capture, Event, Frame};
 
 struct State {
     start: Instant,
@@ -21,7 +21,7 @@ struct State {
     frames: Vec<(usize, i32)>,
     stack_ids: HashMap<Vec<u32>, u32>,
     stacks: Vec<Vec<u32>>,
-    live: HashMap<usize, (u64, u32)>,
+    live: HashMap<usize, (u64, u32, bool)>,
     events: Vec<Event>,
     temporaries: HashMap<u32, u64>,
     alloc_count: u64,
@@ -71,7 +71,7 @@ unsafe fn attr_string(obj: *mut ffi::PyObject, name: &std::ffi::CStr) -> String 
 
 /// `raw_frames` holds (code object, bytecode offset) pairs, each code object
 /// with a new reference that this function takes over.
-pub unsafe fn record_alloc(addr: usize, bytes: u64, raw_frames: &[(usize, i32)]) {
+pub unsafe fn record_alloc(addr: usize, bytes: u64, raw_frames: &[(usize, i32)], native: bool) {
     let mut guard = lock(&STATE);
     let Some(st) = guard.as_mut() else {
         for &(code, _) in raw_frames {
@@ -109,11 +109,11 @@ pub unsafe fn record_alloc(addr: usize, bytes: u64, raw_frames: &[(usize, i32)])
         }
     };
 
-    if let Some((old_bytes, old_stack)) = st.live.insert(addr, (bytes, stack_id)) {
-        // A free we never saw (e.g. through an allocator we do not hook yet).
-        st.events.push(Event { t_ns, delta: -(old_bytes as i64), stack: old_stack });
+    if let Some((old_bytes, old_stack, old_native)) = st.live.insert(addr, (bytes, stack_id, native)) {
+        // A free we never saw (e.g. memory released inside libc).
+        st.events.push(Event { t_ns, delta: -(old_bytes as i64), stack: old_stack, native: old_native });
     }
-    st.events.push(Event { t_ns, delta: bytes as i64, stack: stack_id });
+    st.events.push(Event { t_ns, delta: bytes as i64, stack: stack_id, native });
     st.alloc_count += 1;
     st.alloc_bytes += bytes;
 }
@@ -121,9 +121,9 @@ pub unsafe fn record_alloc(addr: usize, bytes: u64, raw_frames: &[(usize, i32)])
 pub fn record_free(addr: usize, temporary: bool) {
     let mut guard = lock(&STATE);
     let Some(st) = guard.as_mut() else { return };
-    if let Some((bytes, stack)) = st.live.remove(&addr) {
+    if let Some((bytes, stack, native)) = st.live.remove(&addr) {
         let t_ns = st.start.elapsed().as_nanos() as u64;
-        st.events.push(Event { t_ns, delta: -(bytes as i64), stack });
+        st.events.push(Event { t_ns, delta: -(bytes as i64), stack, native });
         if temporary {
             *st.temporaries.entry(stack).or_insert(0) += 1;
         }
@@ -132,7 +132,7 @@ pub fn record_free(addr: usize, temporary: bool) {
 
 /// Collect everything into a `Capture`. Caller holds the GIL and has already
 /// uninstalled the hooks.
-pub unsafe fn finish(sample_rate: u64) -> Option<Capture> {
+pub unsafe fn finish(sample_rate: u64, native_supported: bool) -> Option<Capture> {
     let st = lock(&STATE).take()?;
 
     let mut names: HashMap<usize, (String, String)> = HashMap::new();
@@ -153,11 +153,12 @@ pub unsafe fn finish(sample_rate: u64) -> Option<Capture> {
         ffi::Py_DECREF(code as *mut ffi::PyObject);
     }
 
-    let mut live_by_stack: HashMap<u32, (u64, u64)> = HashMap::new();
-    for (bytes, stack) in st.live.values() {
-        let e = live_by_stack.entry(*stack).or_insert((0, 0));
-        e.0 += bytes;
-        e.1 += 1;
+    let mut live_by_stack: HashMap<u32, Agg> = HashMap::new();
+    for &(bytes, stack, native) in st.live.values() {
+        let e = live_by_stack.entry(stack).or_default();
+        e.bytes += bytes;
+        e.native_bytes += if native { bytes } else { 0 };
+        e.count += 1;
     }
 
     Some(Capture::new(
@@ -170,5 +171,6 @@ pub unsafe fn finish(sample_rate: u64) -> Option<Capture> {
         st.alloc_count,
         st.alloc_bytes,
         sample_rate,
+        native_supported,
     ))
 }

@@ -4,19 +4,22 @@ A Python memory profiler that tells you what is using your memory. Rust core,
 `pip install`, no code changes.
 
 ```
-$ heapwise run etl.py
+$ heapwise run arrays.py
 
-heapwise · etl.py · 0.19 s · sampled, one per 32.0 KiB on average
+heapwise · arrays.py · 0.48 s · sampled, one per 32.0 KiB on average · Python + native
 
-Peak 52.1 MiB at 0.09 s. 99% of it was allocated by load_rows() at etl.py:7.
-Still allocated at exit: 5.3 MiB, most of it from load_rows() at etl.py:7.
-Memory over time  ▁▁▁▂▂▂▃▃▃▄▄▄▅▅▅▆▆▇▇▇███▇▆▅▄▃▂▂▂▂▂▂▂▂▂▂▂▂  peak 52.1 MiB
+Peak 104.2 MiB (95.2 MiB native, 9.1 MiB Python) at 0.33 s. 59% of it was allocated by normalise() at arrays.py:13.
+Still allocated at exit: 14.2 MiB, most of it from <module>() at arrays.py:3.
+Memory over time  ▁▁▁▁▂▂▂▂▄▄▄▄▄▄▄▄▄▄▄▄▆▆▆▆▆▆▆▆▆▆▆▆█████████████▆█▆  peak 104.2 MiB
 
 Peak: what was live at the high-water mark
-   98.6%    51.4 MiB  load_rows  etl.py:7
-    0.3%   157.4 KiB  remember   etl.py:12
+   58.6%    61.0 MiB    61.0 MiB native  normalise            arrays.py:13
+   30.8%    32.1 MiB    31.2 MiB native  load_matrix          arrays.py:9
 ...
 ```
+
+It sees Python objects (including pymalloc's small objects) on every OS, and
+on Linux also `malloc`/`mmap` from C extensions and the libraries they load.
 
 ## Use
 

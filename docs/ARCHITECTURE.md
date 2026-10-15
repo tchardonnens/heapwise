@@ -44,7 +44,8 @@ python/heapwise/        thin Python layer
   __init__.py           profile() context manager, start/stop
 
 src/                    Rust core (heapwise._native)
-  hooks.rs              allocator interception, sampling, stack capture
+  hooks.rs              CPython allocator hooks, sampling, stack capture
+  native/linux.rs       malloc/mmap interception via GOT patching (Linux)
   recorder.rs           cheap event log + interning on the hot path
   analysis.rs           peak / leaks / temporaries / timeline, after the run
   report.rs             findings-first terminal report
@@ -64,6 +65,39 @@ src/                    Rust core (heapwise._native)
 - Hook rules: never call Python while holding a lock; Python C-API calls only
   inside a thread-local re-entrancy guard; Rust's own allocations go to the
   system allocator, never through PyMem.
+
+### Native allocations (native/)
+
+- **Linux (x86_64, aarch64):** rewrite the GOT entries for `malloc`,
+  `calloc`, `realloc`, `reallocarray`, `free`, `posix_memalign`,
+  `aligned_alloc`, `memalign`, `valloc`, `pvalloc`, `mmap` (anonymous only)
+  and `munmap` in every loaded C extension and the libraries it pulls in
+  (OpenBLAS, Arrow, libstdc++ for `operator new`, ...). The wrappers call the
+  real function through heapwise's own, unpatched GOT and report to the same
+  recorder. No `LD_PRELOAD`, so it works when recording starts mid-run.
+- **Never patched:** libc, the dynamic loader, the vDSO and heapwise itself.
+  The interpreter (main executable or libpython) only gets `dlopen` patched:
+  its allocations already arrive through the PyMem hooks, so patching its
+  `malloc` would count them twice.
+- **Libraries loaded later:** imports go through the interpreter's `dlopen`,
+  which we hook, so the new extension is patched before its first call. Other
+  loads (`ctypes.CDLL`, a library loading a plugin) are caught by checking the
+  loader's load counter (`dlpi_adds`) every 1024 recorded allocations. We do
+  not hook `dlopen` inside libraries because calling it from heapwise would
+  change whose RUNPATH the loader searches.
+- **Unpatching:** `stop()` restores each entry that still points at our
+  wrapper, skipping libraries unloaded in the meantime. RELRO pages are made
+  read-only again after each write.
+- **Fork:** a `pthread_atfork` child handler turns recording off in the child,
+  so a recorder lock held by another thread at fork time cannot deadlock it.
+- **"Native" in reports** means memory requested by C code: these hooks plus
+  the PyMem RAW domain. numpy 2.x allocates array data with
+  `PyMem_RawMalloc`, so its buffers show up as native on every OS; the GOT
+  hooks add libraries that call `malloc` directly.
+- **Stacks:** a native allocation is credited to the Python line that called
+  into C. Allocations with no Python stack (a library's own threads such as
+  OpenBLAS workers, or calls that released the GIL) are grouped as
+  `<no Python stack>`.
 
 ### Recording (recorder.rs)
 
@@ -97,14 +131,16 @@ Process RSS is printed as context only, never attributed to lines (don't #1).
 
 ## Status of the scaffold
 
-Working today (Linux, CPython 3.13, 14 tests passing):
+Working today (Linux, CPython 3.13, 20 tests passing):
 
 - `heapwise run script.py` / `-m module`, exit code passed through
 - Python allocator domains incl. pymalloc, all threads
+- native `malloc`/`mmap` from C extensions on Linux, split out as "native"
+  in the report
 - sampling (default) and `--exact`
 - Peak, Leaks, Temporaries views, timeline sparkline, findings-first summary
 - `limit_memory` pytest marker
-- `maturin generate-ci` workflow for Linux/macOS/Windows wheels (not run yet)
+- CI builds wheels for Linux, musllinux, macOS and Windows and runs the tests
 
 Measured on `examples/etl.py` (allocation-heavy micro benchmark, 0.12 s
 plain): sampled mode 0.19 s, exact mode 1.7 s. Exact mode is over the 10x
@@ -114,12 +150,12 @@ budget for allocation-heavy code; see roadmap item 2.
 
 Ordered by what the research says matters most.
 
-1. **Native allocations** (do #6). Interpose `malloc`/`free`/`mmap` for
-   numpy, pandas, Arrow, Torch: GOT/PLT patching on Linux, `__interpose` /
-   fishhook-style rebinding on macOS, IAT patching on Windows, plus a `dlopen`
-   hook for libraries loaded later. Unwind with `framehop`, symbolize with
-   `gimli` at analysis time, and stitch native frames under the Python frame
-   that called them. Today numpy array buffers are invisible.
+1. **Native allocations** (do #6). Done on Linux. Next: macOS (rebind
+   `__la_symbol_ptr` / `__got` entries, fishhook-style) and Windows (IAT
+   patching); native call stacks with `framehop` unwinding and `gimli`
+   symbolization at analysis time, stitched under the Python frame that
+   called them; attribute `<no Python stack>` memory to the library that
+   allocated it; track partial `munmap`.
 2. **Cheaper exact mode** (don't #6). Replace per-allocation frame walking
    with a shadow stack maintained from `sys.monitoring` PY_START/PY_RETURN
    events (3.12+) or the 3.14 unstable frame API; per-thread lock-free event
@@ -151,5 +187,9 @@ Ordered by what the research says matters most.
 
 - Requires CPython 3.12+ (deferred GC scheduling keeps frame walking inside
   the allocator safe).
-- RAW-domain allocations made without the GIL have no Python stack.
+- Allocations made without the GIL (RAW domain or native) have no Python
+  stack yet; roadmap item 2's shadow stack fixes this.
+- Native interception is Linux-only. Libraries that call `malloc` through a
+  pointer obtained from `dlsym`, or use a statically linked allocator
+  (jemalloc, mimalloc), are seen only through their `mmap` calls.
 - A `realloc` that fails forgets the original block (rare, documented).

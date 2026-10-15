@@ -39,6 +39,16 @@ fn location(r: &SiteRow, cwd: Option<&str>) -> String {
     format!("{}:{}", short_path(&r.file, cwd), r.line)
 }
 
+/// "load_rows() at etl.py:7", or a plain description when there is no
+/// Python frame (library-owned threads, or calls that released the GIL).
+fn culprit(r: &SiteRow, cwd: Option<&str>) -> String {
+    if r.file.is_empty() {
+        "native code with no Python stack (a library's own threads, or a call that released the GIL)".into()
+    } else {
+        format!("{}() at {}", r.func, location(r, cwd))
+    }
+}
+
 fn sparkline(values: &[u64]) -> String {
     const BARS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
     let max = values.iter().copied().max().unwrap_or(0).max(1);
@@ -63,51 +73,60 @@ pub fn summary(cap: &Capture, title: &str, exclude: &[String], cwd: Option<&str>
     } else {
         format!("sampled, one per {} on average", human_bytes(cap.sample_rate))
     };
-    let _ = writeln!(out, "heapwise · {title} · {:.2} s · {mode}", cap.duration_ns as f64 / 1e9);
+    let coverage = if cap.native_supported {
+        "Python + native"
+    } else {
+        "malloc/mmap from C extensions not tracked on this OS yet"
+    };
+    let _ = writeln!(out, "heapwise · {title} · {:.2} s · {mode} · {coverage}", cap.duration_ns as f64 / 1e9);
     let _ = writeln!(out);
 
     let peak_rows = cap.rows("peak", exclude);
     let leak_rows = cap.rows("leaks", exclude);
     let temp_rows = cap.rows("temporaries", exclude);
-    let leaked: u64 = cap.live_at_end.values().map(|(b, _)| b).sum();
+    let leaked: u64 = cap.live_at_end.values().map(|a| a.bytes).sum();
 
     // Findings.
     if cap.peak_bytes == 0 {
         let _ = writeln!(out, "No Python heap allocations were recorded.");
         return out;
     }
+    let split = {
+        format!(
+            " ({} native, {} Python)",
+            human_bytes(cap.peak_native_bytes),
+            human_bytes(cap.peak_bytes - cap.peak_native_bytes.min(cap.peak_bytes))
+        )
+    };
     let mut line = format!(
-        "Peak {} at {:.2} s.",
+        "Peak {}{split} at {:.2} s.",
         human_bytes(cap.peak_bytes),
         cap.peak_t_ns as f64 / 1e9
     );
     if let Some(r) = peak_rows.first() {
         let _ = write!(
             line,
-            " {:.0}% of it was allocated by {}() at {}.",
+            " {:.0}% of it was allocated by {}.",
             pct(r.bytes, cap.peak_bytes),
-            r.func,
-            location(r, cwd)
+            culprit(r, cwd)
         );
     }
     let _ = writeln!(out, "{line}");
     if let Some(r) = leak_rows.first().filter(|_| leaked > 0) {
         let _ = writeln!(
             out,
-            "Still allocated at exit: {}, most of it from {}() at {}.",
+            "Still allocated at exit: {}, most of it from {}.",
             human_bytes(leaked),
-            r.func,
-            location(r, cwd)
+            culprit(r, cwd)
         );
     }
     if let Some(r) = temp_rows.first() {
         let total: u64 = temp_rows.iter().map(|r| r.count).sum();
         let _ = writeln!(
             out,
-            "{} temporary allocations (freed right after being made); {}() at {} made {}.",
+            "{} temporary allocations (freed right after being made); {} made {}.",
             total,
-            r.func,
-            location(r, cwd),
+            culprit(r, cwd),
             r.count
         );
     }
@@ -122,12 +141,18 @@ pub fn summary(cap: &Capture, title: &str, exclude: &[String], cwd: Option<&str>
         let _ = writeln!(out);
         let _ = writeln!(out, "{heading}");
         let width = rows.iter().take(top).map(|r| r.func.len()).max().unwrap_or(0).min(40);
+        let any_native = rows.iter().take(top).any(|r| r.native_bytes > 0);
         for r in rows.iter().take(top) {
             let func: String = r.func.chars().take(40).collect();
             if bytes {
+                let native = match (any_native, r.native_bytes) {
+                    (false, _) => String::new(),
+                    (true, 0) => format!("  {:>17}", ""),
+                    (true, n) => format!("  {:>17}", format!("{} native", human_bytes(n))),
+                };
                 let _ = writeln!(
                     out,
-                    "  {:>5.1}%  {:>10}  {:<width$}  {}",
+                    "  {:>5.1}%  {:>10}{native}  {:<width$}  {}",
                     pct(r.bytes, whole),
                     human_bytes(r.bytes),
                     func,

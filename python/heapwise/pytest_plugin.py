@@ -36,7 +36,7 @@ def pytest_runtest_call(item: pytest.Item):
         cwd = os.getcwd()
         lines = [
             f"  {format_bytes(b):>10}  {func}  {os.path.relpath(file, cwd) if file else ''}:{line}"
-            for func, file, line, b, _ in rows
+            for func, file, line, b, _, _ in rows
         ]
         pytest.fail(
             f"Test used {format_bytes(capture.peak_bytes)} at peak, over its "
