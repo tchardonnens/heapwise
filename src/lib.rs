@@ -25,6 +25,7 @@ fn start(sample_rate: u64) -> PyResult<()> {
         return Err(PyRuntimeError::new_err("heapwise is already recording"));
     }
     recorder::begin();
+    hooks::EPOCH.fetch_add(1, Ordering::SeqCst);
     hooks::SAMPLE_RATE.store(sample_rate, Ordering::SeqCst);
     unsafe { hooks::install() };
     hooks::NATIVE.store(native::install(), Ordering::SeqCst);

@@ -102,3 +102,45 @@ def test_summary_leads_with_the_peak():
 @pytest.mark.parametrize("text,expected", [("24 MB", 24_000_000), ("512KiB", 524288), ("1.5 GiB", 1610612736), (7, 7)])
 def test_parse_size(text, expected):
     assert heapwise.parse_size(text) == expected
+
+
+def test_stacks_stay_distinct_when_callers_alternate(tmp_path, monkeypatch):
+    # The same helper called from two places, interleaved. The per-thread
+    # stack cache must not credit one caller's blocks to the other. The helper
+    # lives in its own module, which we exclude so blocks go to the callers.
+    (tmp_path / "hw_helper.py").write_text(
+        "def alloc(n):\n    return [bytearray(4096) for _ in range(n)]\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    import hw_helper
+
+    def via_one(n):
+        return hw_helper.alloc(n)
+
+    def via_two(n):
+        return hw_helper.alloc(n)
+
+    keep = []
+    with heapwise.profile() as result:
+        for _ in range(50):
+            keep.append(via_one(10))
+            keep.append(via_two(20))
+    rows = result[0].top("leaks", [str(tmp_path)], 20)
+    by_func = {r[0].rsplit(".", 1)[-1]: r[3] for r in rows}
+    block = 4096 + 32  # bytearray payload plus object overhead, roughly
+    assert 50 * 10 * 4096 <= by_func["via_one"] < 50 * 10 * block * 1.5
+    assert 50 * 20 * 4096 <= by_func["via_two"] < 50 * 20 * block * 1.5
+
+
+def test_peak_time_is_within_the_run():
+    import time
+
+    with heapwise.profile() as result:
+        time.sleep(0.05)
+        blocks = allocate_blocks(20, 256 * 1024)
+        del blocks
+        time.sleep(0.05)
+    cap = result[0]
+    assert 0.04 < cap.peak_seconds < cap.duration_seconds
+    tl = cap.timeline(10)
+    assert len(tl) == 10 and max(tl) == cap.peak_bytes
