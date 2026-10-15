@@ -10,6 +10,15 @@ import pytest
 from . import default_exclude, format_bytes, is_recording, parse_size, start, stop
 
 
+def _short(path: str) -> str:
+    if not path:
+        return ""
+    try:
+        return os.path.relpath(path)
+    except ValueError:  # Windows: path on another drive than the cwd
+        return path
+
+
 def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
         "markers",
@@ -33,11 +42,7 @@ def pytest_runtest_call(item: pytest.Item):
         return
     if capture.peak_bytes > limit:
         rows = capture.top("peak", default_exclude(), 5)
-        cwd = os.getcwd()
-        lines = [
-            f"  {format_bytes(b):>10}  {func}  {os.path.relpath(file, cwd) if file else ''}:{line}"
-            for func, file, line, b, _, _ in rows
-        ]
+        lines = [f"  {format_bytes(b):>10}  {func}  {_short(file)}:{line}" for func, file, line, b, _, _ in rows]
         pytest.fail(
             f"Test used {format_bytes(capture.peak_bytes)} at peak, over its "
             f"{format_bytes(limit)} limit. Largest allocations at the peak:\n" + "\n".join(lines),
