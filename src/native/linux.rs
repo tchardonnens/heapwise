@@ -16,7 +16,7 @@
 
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_int, c_void};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 use libc::{off_t, size_t};
@@ -64,11 +64,7 @@ const RELOC_TYPES: [u32; 2] = [7, 6]; // R_X86_64_JUMP_SLOT, R_X86_64_GLOB_DAT
 const RELOC_TYPES: [u32; 2] = [1026, 1025]; // R_AARCH64_JUMP_SLOT, R_AARCH64_GLOB_DAT
 
 extern "C" {
-    fn memalign(align: size_t, size: size_t) -> *mut c_void;
     fn aligned_alloc(align: size_t, size: size_t) -> *mut c_void;
-    fn valloc(size: size_t) -> *mut c_void;
-    fn pvalloc(size: size_t) -> *mut c_void;
-    fn reallocarray(ptr: *mut c_void, nmemb: size_t, size: size_t) -> *mut c_void;
     fn pthread_atfork(
         prepare: Option<unsafe extern "C" fn()>,
         parent: Option<unsafe extern "C" fn()>,
@@ -94,8 +90,33 @@ static INSTALLED: AtomicBool = AtomicBool::new(false);
 static LOAD_GENERATION: AtomicU64 = AtomicU64::new(0);
 static PATCHES: Mutex<Vec<Patch>> = Mutex::new(Vec::new());
 
-fn hook_table() -> [(&'static [u8], usize); 13] {
-    [
+// Functions not every libc has (musl has no pvalloc). Linking them directly
+// would make the extension fail to load there, so they are looked up at
+// install time, and one that is missing is simply not hooked.
+static REAL_REALLOCARRAY: AtomicUsize = AtomicUsize::new(0);
+static REAL_MEMALIGN: AtomicUsize = AtomicUsize::new(0);
+static REAL_VALLOC: AtomicUsize = AtomicUsize::new(0);
+static REAL_PVALLOC: AtomicUsize = AtomicUsize::new(0);
+
+fn resolve_optional() {
+    let find = |name: &CStr| unsafe { libc::dlsym(libc::RTLD_DEFAULT, name.as_ptr()) as usize };
+    REAL_REALLOCARRAY.store(find(c"reallocarray"), Ordering::SeqCst);
+    REAL_MEMALIGN.store(find(c"memalign"), Ordering::SeqCst);
+    REAL_VALLOC.store(find(c"valloc"), Ordering::SeqCst);
+    REAL_PVALLOC.store(find(c"pvalloc"), Ordering::SeqCst);
+}
+
+fn hook_table() -> Vec<(&'static [u8], usize)> {
+    let optional = [
+        (&REAL_REALLOCARRAY, b"reallocarray" as &[u8]),
+        (&REAL_MEMALIGN, b"memalign"),
+        (&REAL_VALLOC, b"valloc"),
+        (&REAL_PVALLOC, b"pvalloc"),
+    ];
+    let missing = |name: &[u8]| {
+        optional.iter().any(|(real, n)| *n == name && real.load(Ordering::Relaxed) == 0)
+    };
+    let all: [(&'static [u8], usize); 13] = [
         (b"malloc", hw_malloc as *const () as usize),
         (b"calloc", hw_calloc as *const () as usize),
         (b"realloc", hw_realloc as *const () as usize),
@@ -109,7 +130,8 @@ fn hook_table() -> [(&'static [u8], usize); 13] {
         (b"mmap", hw_mmap as *const () as usize),
         (b"mmap64", hw_mmap as *const () as usize),
         (b"munmap", hw_munmap as *const () as usize),
-    ]
+    ];
+    all.into_iter().filter(|(name, _)| !missing(name)).collect()
 }
 
 pub fn install() -> bool {
@@ -118,6 +140,7 @@ pub fn install() -> bool {
         ATFORK.call_once(|| {
             pthread_atfork(None, None, Some(crate::hooks::after_fork_in_child));
         });
+        resolve_optional();
         INSTALLED.store(true, Ordering::SeqCst);
         patch_all();
     }
@@ -141,23 +164,21 @@ pub fn uninstall() {
     }
 }
 
-fn own_object_name() -> Option<Vec<u8>> {
-    unsafe {
-        let mut info: libc::Dl_info = std::mem::zeroed();
-        if libc::dladdr(hw_malloc as *const c_void, &mut info) == 0 || info.dli_fname.is_null() {
-            return None;
+/// Whether this object is heapwise itself. Checked by address, not by name:
+/// the loader may report our path differently from `dladdr` (musl does), and
+/// patching our own GOT would make every wrapper call itself.
+unsafe fn is_own_object(info: &libc::dl_phdr_info) -> bool {
+    let ours = hw_malloc as *const () as usize;
+    let base = info.dlpi_addr as usize;
+    phdrs(info).iter().any(|ph| {
+        ph.p_type == PT_LOAD && {
+            let lo = base + ph.p_vaddr as usize;
+            ours >= lo && ours < lo + ph.p_memsz as usize
         }
-        Some(CStr::from_ptr(info.dli_fname).to_bytes().to_vec())
-    }
+    })
 }
 
-fn scope_for(name: &[u8], own: &Option<Vec<u8>>) -> Scope {
-    if name.is_empty() {
-        return Scope::DlopenOnly; // the main executable
-    }
-    if own.as_deref() == Some(name) {
-        return Scope::Skip;
-    }
+fn scope_for(name: &[u8]) -> Scope {
     let contains = |needle: &[u8]| name.windows(needle.len()).any(|w| w == needle);
     const SKIP: [&[u8]; 8] = [
         b"linux-vdso",
@@ -176,10 +197,6 @@ fn scope_for(name: &[u8], own: &Option<Vec<u8>>) -> Scope {
         return Scope::DlopenOnly;
     }
     Scope::All
-}
-
-struct WalkCtx {
-    own: Option<Vec<u8>>,
 }
 
 /// Patch libraries loaded since the last pass. `dlopen` from the interpreter
@@ -211,15 +228,20 @@ fn load_generation() -> u64 {
 
 unsafe fn patch_all() {
     LOAD_GENERATION.store(load_generation(), Ordering::Relaxed);
-    let mut ctx = WalkCtx { own: own_object_name() };
-    libc::dl_iterate_phdr(Some(patch_callback), &mut ctx as *mut WalkCtx as *mut c_void);
+    let mut index = 0usize;
+    libc::dl_iterate_phdr(Some(patch_callback), &mut index as *mut usize as *mut c_void);
 }
 
 unsafe extern "C" fn patch_callback(info: *mut libc::dl_phdr_info, _size: size_t, data: *mut c_void) -> c_int {
-    let ctx = &*(data as *const WalkCtx);
+    let index = &mut *(data as *mut usize);
+    let is_main = *index == 0; // the main program always comes first
+    *index += 1;
     let info = &*info;
+    if is_own_object(info) {
+        return 0;
+    }
     let name = if info.dlpi_name.is_null() { &b""[..] } else { CStr::from_ptr(info.dlpi_name).to_bytes() };
-    let scope = scope_for(name, &ctx.own);
+    let scope = if is_main { Scope::DlopenOnly } else { scope_for(name) };
     if scope != Scope::Skip {
         patch_object(info, scope);
     }
@@ -395,7 +417,7 @@ unsafe extern "C" fn hw_reallocarray(ptr: *mut c_void, n: size_t, size: size_t) 
     if !ptr.is_null() {
         on_free(ptr as usize);
     }
-    let p = reallocarray(ptr, n, size);
+    let p = std::mem::transmute::<usize, unsafe extern "C" fn(*mut c_void, size_t, size_t) -> *mut c_void>(REAL_REALLOCARRAY.load(Ordering::Relaxed))(ptr, n, size);
     if !p.is_null() {
         on_alloc(Source::Native, p as usize, n.saturating_mul(size));
     }
@@ -426,7 +448,7 @@ unsafe extern "C" fn hw_aligned_alloc(align: size_t, size: size_t) -> *mut c_voi
 }
 
 unsafe extern "C" fn hw_memalign(align: size_t, size: size_t) -> *mut c_void {
-    let p = memalign(align, size);
+    let p = std::mem::transmute::<usize, unsafe extern "C" fn(size_t, size_t) -> *mut c_void>(REAL_MEMALIGN.load(Ordering::Relaxed))(align, size);
     if !p.is_null() {
         on_alloc(Source::Native, p as usize, size);
     }
@@ -434,7 +456,7 @@ unsafe extern "C" fn hw_memalign(align: size_t, size: size_t) -> *mut c_void {
 }
 
 unsafe extern "C" fn hw_valloc(size: size_t) -> *mut c_void {
-    let p = valloc(size);
+    let p = std::mem::transmute::<usize, unsafe extern "C" fn(size_t) -> *mut c_void>(REAL_VALLOC.load(Ordering::Relaxed))(size);
     if !p.is_null() {
         on_alloc(Source::Native, p as usize, size);
     }
@@ -442,7 +464,7 @@ unsafe extern "C" fn hw_valloc(size: size_t) -> *mut c_void {
 }
 
 unsafe extern "C" fn hw_pvalloc(size: size_t) -> *mut c_void {
-    let p = pvalloc(size);
+    let p = std::mem::transmute::<usize, unsafe extern "C" fn(size_t) -> *mut c_void>(REAL_PVALLOC.load(Ordering::Relaxed))(size);
     if !p.is_null() {
         on_alloc(Source::Native, p as usize, size);
     }
