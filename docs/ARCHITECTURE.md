@@ -101,10 +101,19 @@ src/                    Rust core (heapwise._native)
 
 ### Recording (recorder.rs)
 
-heaptrack's model (do #9): each allocation/free appends a 24-byte event
-(time, signed bytes, stack id). Frames and stacks are interned. Nothing is
-aggregated on the hot path except the address → (bytes, stack) map needed to
-attribute frees.
+heaptrack's model (do #9): each allocation/free appends a 16-byte event
+(signed bytes, stack id, native flag). Nothing is aggregated on the hot path
+except the address → (bytes, stack) map needed to attribute frees.
+
+What keeps the hot path cheap:
+
+- **Stack trie.** Stacks are interned as (parent stack, frame) → stack, one
+  small key per frame, hashed with FxHash (SipHash was half the cost).
+- **Caller cache.** Each thread remembers its last walk. When every frame but
+  the innermost matches, the callers' stack id is reused and only the
+  innermost frame is interned, which is the common case in a loop.
+- **Sparse clock.** The clock is read every 64 events; event times are
+  interpolated between those ticks at analysis time.
 
 ### Analysis (analysis.rs)
 
@@ -131,7 +140,7 @@ Process RSS is printed as context only, never attributed to lines (don't #1).
 
 ## Status of the scaffold
 
-Working today (Linux, CPython 3.13, 20 tests passing):
+Working today (Linux, CPython 3.13, 22 tests passing):
 
 - `heapwise run script.py` / `-m module`, exit code passed through
 - Python allocator domains incl. pymalloc, all threads
@@ -142,9 +151,11 @@ Working today (Linux, CPython 3.13, 20 tests passing):
 - `limit_memory` pytest marker
 - CI builds wheels for Linux, musllinux, macOS and Windows and runs the tests
 
-Measured on `examples/etl.py` (allocation-heavy micro benchmark, 0.12 s
-plain): sampled mode 0.19 s, exact mode 1.7 s. Exact mode is over the 10x
-budget for allocation-heavy code; see roadmap item 2.
+Exact mode on an allocation-heavy micro benchmark (1.6M allocations,
+0.08 s plain): 0.53 s, down from 1.15 s before the changes above. A threaded
+numpy + OpenBLAS run goes from 3.0 s plain to 4.2 s exact. The remaining cost
+is mostly the frame walk through the public C API (roadmap item 2). Sampled
+mode, the default, adds well under 2x.
 
 ## Roadmap
 
@@ -156,10 +167,11 @@ Ordered by what the research says matters most.
    symbolization at analysis time, stitched under the Python frame that
    called them; attribute `<no Python stack>` memory to the library that
    allocated it; track partial `munmap`.
-2. **Cheaper exact mode** (don't #6). Replace per-allocation frame walking
-   with a shadow stack maintained from `sys.monitoring` PY_START/PY_RETURN
-   events (3.12+) or the 3.14 unstable frame API; per-thread lock-free event
-   buffers drained by a writer thread instead of one mutex.
+2. **Cheaper exact mode** (don't #6). Hashing, interning and clock costs
+   are done. Next: walk `_PyInterpreterFrame` directly with per-version
+   layouts instead of materialising frame objects through the public API,
+   which would also give GIL-released native allocations their Python stack;
+   per-thread event buffers instead of one mutex, for threaded programs.
 3. **Stream to disk.** Events go to an lz4-compressed capture file as they
    happen, so hour-long runs do not keep the log in RAM. The same run still
    prints the summary (don't #5); the file feeds the UI and `diff`.

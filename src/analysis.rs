@@ -6,7 +6,6 @@ use pyo3::prelude::*;
 
 #[derive(Clone, Copy)]
 pub struct Event {
-    pub t_ns: u64,
     pub delta: i64,
     pub stack: u32,
     /// From malloc/mmap in native code rather than CPython's allocators.
@@ -52,6 +51,9 @@ pub struct Capture {
     pub frames: Vec<Frame>,
     pub stacks: Vec<Vec<u32>>,
     pub events: Vec<Event>,
+    /// (event index, ns since start), taken every few events; event times
+    /// are interpolated between them so the hot path skips the clock.
+    pub ticks: Vec<(usize, u64)>,
     pub live_at_end: HashMap<u32, Agg>,
     pub temporaries: HashMap<u32, u64>,
     pub duration_ns: u64,
@@ -72,6 +74,7 @@ impl Capture {
         frames: Vec<Frame>,
         stacks: Vec<Vec<u32>>,
         events: Vec<Event>,
+        ticks: Vec<(usize, u64)>,
         live_at_end: HashMap<u32, Agg>,
         temporaries: HashMap<u32, u64>,
         duration_ns: u64,
@@ -81,15 +84,15 @@ impl Capture {
         native_supported: bool,
     ) -> Self {
         // Pass 1: find the high-water mark.
-        let (mut cur, mut peak, mut peak_idx, mut peak_t) = (0i64, 0i64, None, 0u64);
+        let (mut cur, mut peak, mut peak_idx) = (0i64, 0i64, None);
         for (i, e) in events.iter().enumerate() {
             cur += e.delta;
             if cur > peak {
                 peak = cur;
                 peak_idx = Some(i);
-                peak_t = e.t_ns;
             }
         }
+        let peak_t = peak_idx.map_or(0, |i| time_of(&ticks, i));
         // Pass 2: replay up to it to see what was live.
         // (bytes, native bytes, blocks)
         let mut by_stack: HashMap<u32, (i64, i64, i64)> = HashMap::new();
@@ -116,6 +119,7 @@ impl Capture {
             frames,
             stacks,
             events,
+            ticks,
             live_at_end,
             temporaries,
             duration_ns,
@@ -183,8 +187,9 @@ impl Capture {
         let mut out = vec![0u64; buckets];
         let mut cur = 0i64;
         let mut last_bucket = 0;
-        for e in &self.events {
-            let b = ((e.t_ns as u128 * buckets as u128) / span as u128).min(buckets as u128 - 1) as usize;
+        for (i, e) in self.events.iter().enumerate() {
+            let t_ns = time_of(&self.ticks, i);
+            let b = ((t_ns as u128 * buckets as u128) / span as u128).min(buckets as u128 - 1) as usize;
             for slot in out.iter_mut().take(b).skip(last_bucket + 1) {
                 *slot = cur.max(0) as u64; // carry forward through quiet slices
             }
@@ -196,6 +201,18 @@ impl Capture {
             *slot = cur.max(0) as u64;
         }
         out
+    }
+}
+
+/// Time of event `i`, interpolated between the surrounding ticks.
+pub fn time_of(ticks: &[(usize, u64)], i: usize) -> u64 {
+    let j = ticks.partition_point(|&(idx, _)| idx <= i);
+    let Some(&(i0, t0)) = j.checked_sub(1).and_then(|k| ticks.get(k)) else {
+        return 0;
+    };
+    match ticks.get(j) {
+        Some(&(i1, t1)) if i1 > i0 => t0 + ((t1 - t0) as u128 * (i - i0) as u128 / (i1 - i0) as u128) as u64,
+        _ => t0,
     }
 }
 

@@ -30,7 +30,23 @@ static RECORDED: AtomicU64 = AtomicU64::new(0);
 /// Mean bytes between samples; 0 records every allocation.
 pub static SAMPLE_RATE: AtomicU64 = AtomicU64::new(0);
 
+/// The last stack this thread recorded. Allocations come in runs from the
+/// same function, so when every frame but the innermost matches, we reuse the
+/// interned id of the callers and only intern the innermost frame. `epoch`
+/// ties the cache to one capture, since ids restart.
+struct StackCache {
+    epoch: u64,
+    depth: usize,
+    frames: [(usize, i32); MAX_DEPTH],
+    parent: u32,
+}
+
+pub static EPOCH: AtomicU64 = AtomicU64::new(0);
+
 thread_local! {
+    static STACK_CACHE: std::cell::UnsafeCell<StackCache> = const {
+        std::cell::UnsafeCell::new(StackCache { epoch: 0, depth: 0, frames: [(0, 0); MAX_DEPTH], parent: 0 })
+    };
     // Const-initialised, no destructors: safe to touch during thread teardown.
     static IN_HOOK: Cell<bool> = const { Cell::new(false) };
     static BYTES_UNTIL_SAMPLE: Cell<i64> = const { Cell::new(i64::MIN) };
@@ -226,7 +242,22 @@ pub unsafe fn on_alloc(source: Source, addr: usize, size: usize) {
         };
         // Raw-domain blocks are buffers requested by C code (numpy arrays use
         // PyMem_RawMalloc), so they count as native alongside malloc/mmap.
-        recorder::record_alloc(addr, bytes, &frames[..depth], source != Source::PyMem);
+        let native = source != Source::PyMem;
+        let epoch = EPOCH.load(Ordering::Relaxed);
+        STACK_CACHE.with(|c| {
+            // Only this thread touches its cache, and never re-entrantly
+            // (we are inside the IN_HOOK guard).
+            let c = &mut *c.get();
+            let raw = &frames[..depth];
+            let hit = c.epoch == epoch && depth > 0 && c.depth == depth && c.frames[1..depth] == raw[1..];
+            let hint = if hit { Some(c.parent) } else { None };
+            if let Some((_, parent)) = recorder::record_alloc(addr, bytes, raw, native, hint) {
+                c.epoch = epoch;
+                c.depth = depth;
+                c.frames[..depth].copy_from_slice(raw);
+                c.parent = parent;
+            }
+        });
         if RECORDED.fetch_add(1, Ordering::Relaxed).is_multiple_of(1024) && NATIVE.load(Ordering::Relaxed) {
             crate::native::poll();
         }

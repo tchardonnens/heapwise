@@ -4,7 +4,9 @@
 //! leave all aggregation (peak, leaks, temporaries) and symbolization (names,
 //! line numbers) to analysis time.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
+
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::{Mutex, MutexGuard};
 use std::time::Instant;
 
@@ -16,16 +18,40 @@ struct State {
     start: Instant,
     /// Code objects we hold a strong reference to, so each pointer stays
     /// unique for the whole capture.
-    codes: HashSet<usize>,
-    frame_ids: HashMap<(usize, i32), u32>,
+    codes: FxHashSet<usize>,
+    frame_ids: FxHashMap<(usize, i32), u32>,
     frames: Vec<(usize, i32)>,
-    stack_ids: HashMap<Vec<u32>, u32>,
-    stacks: Vec<Vec<u32>>,
-    live: HashMap<usize, (u64, u32, bool)>,
+    /// Stacks as a trie: (parent stack, frame) -> stack. Node 0 is the empty
+    /// stack. Interning walks outermost to innermost, one small key per frame.
+    stack_ids: FxHashMap<(u32, u32), u32>,
+    stack_nodes: Vec<(u32, u32)>,
+    live: FxHashMap<usize, (u64, u32, bool)>,
     events: Vec<Event>,
-    temporaries: HashMap<u32, u64>,
+    ticks: Vec<(usize, u64)>,
+    temporaries: FxHashMap<u32, u64>,
     alloc_count: u64,
     alloc_bytes: u64,
+}
+
+impl State {
+    fn push_alloc(&mut self, addr: usize, bytes: u64, stack: u32, native: bool) {
+        if let Some((old_bytes, old_stack, old_native)) = self.live.insert(addr, (bytes, stack, native)) {
+            // A free we never saw (e.g. memory released inside libc).
+            self.events.push(Event { delta: -(old_bytes as i64), stack: old_stack, native: old_native });
+        }
+        self.events.push(Event { delta: bytes as i64, stack, native });
+        self.alloc_count += 1;
+        self.alloc_bytes += bytes;
+    }
+
+    /// Read the clock only every 64 events; analysis interpolates between.
+    #[inline]
+    fn tick(&mut self) {
+        let n = self.events.len();
+        if n.is_multiple_of(64) {
+            self.ticks.push((n, self.start.elapsed().as_nanos() as u64));
+        }
+    }
 }
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);
@@ -37,14 +63,15 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 pub fn begin() {
     *lock(&STATE) = Some(State {
         start: Instant::now(),
-        codes: HashSet::new(),
-        frame_ids: HashMap::new(),
+        codes: FxHashSet::default(),
+        frame_ids: FxHashMap::default(),
         frames: Vec::new(),
-        stack_ids: HashMap::new(),
-        stacks: Vec::new(),
-        live: HashMap::new(),
+        stack_ids: FxHashMap::default(),
+        stack_nodes: vec![(0, u32::MAX)],
+        live: FxHashMap::default(),
         events: Vec::with_capacity(1 << 16),
-        temporaries: HashMap::new(),
+        ticks: Vec::new(),
+        temporaries: FxHashMap::default(),
         alloc_count: 0,
         alloc_bytes: 0,
     });
@@ -69,61 +96,82 @@ unsafe fn attr_string(obj: *mut ffi::PyObject, name: &std::ffi::CStr) -> String 
     s
 }
 
-/// `raw_frames` holds (code object, bytecode offset) pairs, each code object
-/// with a new reference that this function takes over.
-pub unsafe fn record_alloc(addr: usize, bytes: u64, raw_frames: &[(usize, i32)], native: bool) {
+/// `raw_frames` holds (code object, bytecode offset) pairs, innermost first,
+/// each code object with a new reference that this function takes over.
+///
+/// `known_parent` is the stack id of `raw_frames[1..]` when the caller has it
+/// cached; then only the innermost frame is interned. Returns the ids of the
+/// full stack and of `raw_frames[1..]`.
+pub unsafe fn record_alloc(
+    addr: usize,
+    bytes: u64,
+    raw_frames: &[(usize, i32)],
+    native: bool,
+    known_parent: Option<u32>,
+) -> Option<(u32, u32)> {
     let mut guard = lock(&STATE);
     let Some(st) = guard.as_mut() else {
         for &(code, _) in raw_frames {
             ffi::Py_DECREF(code as *mut ffi::PyObject);
         }
-        return;
+        return None;
     };
-    let t_ns = st.start.elapsed().as_nanos() as u64;
+    st.tick();
 
-    let mut stack = Vec::with_capacity(raw_frames.len());
-    for key in raw_frames {
-        if !st.codes.insert(key.0) {
-            // Already held. The frame still owns the code object, so this
-            // never reaches zero and never runs Python code under the lock.
-            ffi::Py_DECREF(key.0 as *mut ffi::PyObject);
+    let (to_intern, mut stack_id) = match known_parent {
+        Some(parent) if !raw_frames.is_empty() => {
+            for &(code, _) in &raw_frames[1..] {
+                // Interned before, so we already hold a reference, and the
+                // frame still owns one: this never reaches zero.
+                ffi::Py_DECREF(code as *mut ffi::PyObject);
+            }
+            (&raw_frames[..1], parent)
         }
-        let id = match st.frame_ids.get(key) {
-            Some(&id) => id,
+        _ => (raw_frames, 0u32),
+    };
+    let mut parent_id = 0u32;
+    for (i, key) in to_intern.iter().enumerate().rev() {
+        if i == 0 {
+            parent_id = stack_id;
+        }
+        let frame = match st.frame_ids.get(key) {
+            Some(&id) => {
+                // Already held. The frame still owns the code object, so this
+                // never reaches zero and never runs Python code under the lock.
+                ffi::Py_DECREF(key.0 as *mut ffi::PyObject);
+                id
+            }
             None => {
+                if !st.codes.insert(key.0) {
+                    ffi::Py_DECREF(key.0 as *mut ffi::PyObject);
+                }
                 let id = st.frames.len() as u32;
                 st.frames.push(*key);
                 st.frame_ids.insert(*key, id);
                 id
             }
         };
-        stack.push(id);
+        stack_id = match st.stack_ids.get(&(stack_id, frame)) {
+            Some(&id) => id,
+            None => {
+                let id = st.stack_nodes.len() as u32;
+                st.stack_nodes.push((stack_id, frame));
+                st.stack_ids.insert((stack_id, frame), id);
+                id
+            }
+        };
     }
-    let stack_id = match st.stack_ids.get(&stack) {
-        Some(&id) => id,
-        None => {
-            let id = st.stacks.len() as u32;
-            st.stacks.push(stack.clone());
-            st.stack_ids.insert(stack, id);
-            id
-        }
-    };
 
-    if let Some((old_bytes, old_stack, old_native)) = st.live.insert(addr, (bytes, stack_id, native)) {
-        // A free we never saw (e.g. memory released inside libc).
-        st.events.push(Event { t_ns, delta: -(old_bytes as i64), stack: old_stack, native: old_native });
-    }
-    st.events.push(Event { t_ns, delta: bytes as i64, stack: stack_id, native });
-    st.alloc_count += 1;
-    st.alloc_bytes += bytes;
+    st.push_alloc(addr, bytes, stack_id, native);
+    Some((stack_id, parent_id))
 }
 
 pub fn record_free(addr: usize, temporary: bool) {
     let mut guard = lock(&STATE);
     let Some(st) = guard.as_mut() else { return };
     if let Some((bytes, stack, native)) = st.live.remove(&addr) {
-        let t_ns = st.start.elapsed().as_nanos() as u64;
-        st.events.push(Event { t_ns, delta: -(bytes as i64), stack, native });
+        st.tick();
+        st.events.push(Event { delta: -(bytes as i64), stack, native });
         if temporary {
             *st.temporaries.entry(stack).or_insert(0) += 1;
         }
@@ -133,7 +181,9 @@ pub fn record_free(addr: usize, temporary: bool) {
 /// Collect everything into a `Capture`. Caller holds the GIL and has already
 /// uninstalled the hooks.
 pub unsafe fn finish(sample_rate: u64, native_supported: bool) -> Option<Capture> {
-    let st = lock(&STATE).take()?;
+    let mut st = lock(&STATE).take()?;
+    let end = st.start.elapsed().as_nanos() as u64;
+    st.ticks.push((st.events.len(), end));
 
     let mut names: HashMap<usize, (String, String)> = HashMap::new();
     for &code in &st.codes {
@@ -153,6 +203,19 @@ pub unsafe fn finish(sample_rate: u64, native_supported: bool) -> Option<Capture
         ffi::Py_DECREF(code as *mut ffi::PyObject);
     }
 
+    // Innermost-first frame lists; a node's parent always has a lower index.
+    let mut stacks: Vec<Vec<u32>> = Vec::with_capacity(st.stack_nodes.len());
+    for (i, &(parent, frame)) in st.stack_nodes.iter().enumerate() {
+        if i == 0 {
+            stacks.push(Vec::new());
+            continue;
+        }
+        let mut v = Vec::with_capacity(stacks[parent as usize].len() + 1);
+        v.push(frame);
+        v.extend_from_slice(&stacks[parent as usize]);
+        stacks.push(v);
+    }
+
     let mut live_by_stack: HashMap<u32, Agg> = HashMap::new();
     for &(bytes, stack, native) in st.live.values() {
         let e = live_by_stack.entry(stack).or_default();
@@ -163,11 +226,12 @@ pub unsafe fn finish(sample_rate: u64, native_supported: bool) -> Option<Capture
 
     Some(Capture::new(
         frames,
-        st.stacks,
+        stacks,
         st.events,
+        st.ticks,
         live_by_stack,
-        st.temporaries,
-        st.start.elapsed().as_nanos() as u64,
+        st.temporaries.into_iter().collect(),
+        end,
         st.alloc_count,
         st.alloc_bytes,
         sample_rate,

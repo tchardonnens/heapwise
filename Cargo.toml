@@ -13,6 +13,7 @@ crate-type = ["cdylib"]
 [dependencies]
 libc = "0.2"
 pyo3 = { version = "0.25", features = ["extension-module"] }
+rustc-hash = "2"
 
 [profile.release]
 lto = "thin"
