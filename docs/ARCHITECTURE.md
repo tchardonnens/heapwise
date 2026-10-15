@@ -138,6 +138,17 @@ Memory over time  ▁▂▂▂▃▃▃▃▄▄▄▅▅▅▆▆▆▇▇▇�
 
 Process RSS is printed as context only, never attributed to lines (don't #1).
 
+The same run also writes `heapwise-<script>.html` (`python/heapwise/html.py`,
+do #14): one self-contained file, no network, with the findings, a memory
+timeline, Peak / Leaks / Temporaries tabs, an icicle flame graph (click to
+zoom) and an expandable call tree. Rust hands over `Capture.frames()` and
+`Capture.stacks(view)` (full stacks, outermost first); the page merges frames
+on the same line and, by default, collapses code that isn't the user's: the
+launcher and runpy at the root are dropped, and each run of library frames
+keeps only the call the user made into it (do #9). Allocations made while
+runpy compiles the script, before any user frame exists, are one
+`<script startup>` row in both outputs.
+
 ## Status of the scaffold
 
 Working today (Linux, CPython 3.13, 22 tests passing):
@@ -179,10 +190,10 @@ Ordered by what the research says matters most.
    snapshot via `gc.get_objects()` / `gc.get_referents()` from the Python
    layer, handed to Rust for a Lengauer-Tarjan dominator tree and shortest
    path from module globals, frames and thread stacks.
-5. **Offline web UI** (do #14). `heapwise run` ends with "open report? [Y/n]";
-   a single self-contained HTML file with flame graph, Peak / Leaks /
-   Temporaries tabs, memory-over-time, retainers pane, collapsed non-user
-   frames.
+5. **Offline web UI** (do #14). Done: every `heapwise run` writes a single
+   self-contained HTML file with flame graph, call tree, Peak / Leaks /
+   Temporaries tabs, memory-over-time and collapsed non-user frames. Next:
+   a retainers pane once item 4 lands, bottom-up view, Jupyter display.
 6. **Diff** (do #13). `heapwise diff before after` and a "mark" API
    (`heapwise.mark("after warmup")`) to bracket an action, plus a CI-friendly
    baseline comparison for the pytest plugin.

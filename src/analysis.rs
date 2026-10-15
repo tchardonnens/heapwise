@@ -143,20 +143,30 @@ impl Capture {
             .find(|f| !is_excluded(&f.file, exclude))
             .or_else(|| frames.first().map(|&f| &self.frames[f as usize]));
         match pick {
+            Some(f) if !is_excluded(&f.file, exclude) => (f.func.clone(), f.file.clone(), f.line),
+            // Only runpy/importlib below the launcher: compiling and starting
+            // the script, before any of the user's own frames exist.
+            Some(_) if frames.iter().any(|&f| is_runpy(&self.frames[f as usize].file)) => {
+                (STARTUP.into(), String::new(), 0)
+            }
             Some(f) => (f.func.clone(), f.file.clone(), f.line),
-            None => ("<no Python stack>".into(), String::new(), 0),
+            None => (NO_STACK.into(), String::new(), 0),
         }
     }
 
-    pub fn rows(&self, view: &str, exclude: &[String]) -> Vec<SiteRow> {
-        let source: Vec<(u32, Agg)> = match view {
+    fn view_source(&self, view: &str) -> Vec<(u32, Agg)> {
+        match view {
             "peak" => self.peak_by_stack.iter().map(|(&s, a)| (s, *a)).collect(),
             "leaks" => self.live_at_end.iter().map(|(&s, a)| (s, *a)).collect(),
             "temporaries" => {
                 self.temporaries.iter().map(|(&s, &c)| (s, Agg { count: c, ..Agg::default() })).collect()
             }
             _ => Vec::new(),
-        };
+        }
+    }
+
+    pub fn rows(&self, view: &str, exclude: &[String]) -> Vec<SiteRow> {
+        let source = self.view_source(view);
         let mut sites: HashMap<(String, String, i32), Agg> = HashMap::new();
         for (stack, agg) in source {
             sites.entry(self.site_of(stack, exclude)).or_default().add(&agg);
@@ -216,6 +226,23 @@ pub fn time_of(ticks: &[(usize, u64)], i: usize) -> u64 {
     }
 }
 
+/// Site label for allocations made while the script was being loaded.
+pub const STARTUP: &str = "<script startup>";
+/// Site label for allocations with no Python frame at all.
+pub const NO_STACK: &str = "<no Python stack>";
+
+fn is_runpy(file: &str) -> bool {
+    file == "<frozen runpy>" || file.ends_with("/runpy.py") || file.ends_with("\\runpy.py")
+}
+
+fn check_view(view: &str) -> PyResult<()> {
+    if matches!(view, "peak" | "leaks" | "temporaries") {
+        Ok(())
+    } else {
+        Err(pyo3::exceptions::PyValueError::new_err("view must be 'peak', 'leaks' or 'temporaries'"))
+    }
+}
+
 pub fn is_excluded(file: &str, exclude: &[String]) -> bool {
     file.starts_with('<') || exclude.iter().any(|p| !p.is_empty() && file.starts_with(p.as_str()))
 }
@@ -271,17 +298,38 @@ impl Capture {
         exclude: Vec<String>,
         limit: usize,
     ) -> PyResult<Vec<(String, String, i32, u64, u64, u64)>> {
-        if !matches!(view, "peak" | "leaks" | "temporaries") {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "view must be 'peak', 'leaks' or 'temporaries'",
-            ));
-        }
+        check_view(view)?;
         Ok(self
             .rows(view, &exclude)
             .into_iter()
             .take(limit)
             .map(|r| (r.func, r.file, r.line, r.bytes, r.count, r.native_bytes))
             .collect())
+    }
+
+    /// Every frame the capture refers to, as (function, file, line).
+    /// Indexes into this list are what `stacks()` returns.
+    fn frames(&self) -> Vec<(String, String, i32)> {
+        self.frames.iter().map(|f| (f.func.clone(), f.file.clone(), f.line)).collect()
+    }
+
+    /// Full call stacks for one view, outermost frame first:
+    /// (frame indexes, bytes, count, native_bytes). For flame graphs.
+    #[allow(clippy::type_complexity)]
+    fn stacks(&self, view: &str) -> PyResult<Vec<(Vec<u32>, u64, u64, u64)>> {
+        check_view(view)?;
+        let mut out: Vec<_> = self
+            .view_source(view)
+            .into_iter()
+            .filter(|(_, a)| a.bytes > 0 || a.count > 0)
+            .map(|(s, a)| {
+                let mut frames = self.stacks[s as usize].clone();
+                frames.reverse();
+                (frames, a.bytes, a.count, a.native_bytes)
+            })
+            .collect();
+        out.sort_by(|a, b| b.1.cmp(&a.1).then(b.2.cmp(&a.2)).then(a.0.cmp(&b.0)));
+        Ok(out)
     }
 
     #[pyo3(signature = (buckets = 60))]

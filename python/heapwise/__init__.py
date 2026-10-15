@@ -19,6 +19,7 @@ __all__ = [
     "profile",
     "start",
     "stop",
+    "write_html",
 ]
 
 #: Mean bytes between samples in the default (sampling) mode.
@@ -50,6 +51,15 @@ def default_exclude() -> list[str]:
     prefixes = {paths.get(k, "") for k in ("stdlib", "platstdlib", "purelib", "platlib")}
     prefixes.add(os.path.dirname(os.path.abspath(__file__)))
     return sorted(p for p in prefixes if p)
+
+
+def write_html(capture: Capture, path, title: str = "heapwise", exclude=None, cwd=None, notes=None) -> str:
+    """Write a self-contained HTML report (flame graph, call tree, timeline)."""
+    # Imported here so that ``import heapwise`` doesn't pull json etc. into
+    # the program being measured.
+    from .html import write_html as _write
+
+    return _write(capture, path, title, exclude, cwd, notes)
 
 
 @contextlib.contextmanager

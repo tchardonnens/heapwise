@@ -21,12 +21,18 @@ Peak: what was live at the high-water mark
 It sees Python objects (including pymalloc's small objects) on every OS, and
 on Linux also `malloc`/`mmap` from C extensions and the libraries they load.
 
+The same run writes `heapwise-etl.html`: one self-contained file (it works
+offline) with the memory timeline, a flame graph and a call tree for each of
+Peak, Leaks and Temporaries. Code that isn't yours is collapsed by default.
+
 ## Use
 
 ```bash
 heapwise run script.py [args...]      # sampled, cheap
 heapwise run --exact script.py        # every allocation, counts temporaries
 heapwise run -m package.module
+heapwise run --html out.html script.py   # choose where the report goes
+heapwise run --no-html script.py         # terminal summary only
 ```
 
 ```python
@@ -36,6 +42,7 @@ with heapwise.profile() as result:
     work()
 print(heapwise.format_bytes(result[0].peak_bytes))
 print(result[0].top("peak", heapwise.default_exclude(), 5))
+heapwise.write_html(result[0], "report.html")
 ```
 
 ```python
