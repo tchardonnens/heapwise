@@ -1,4 +1,8 @@
-"""heapwise: find what is using your Python program's memory."""
+"""heapwise: find what is using your Python program's memory.
+
+PYTEST_DONT_REWRITE: `heapwise run -m pytest` imports this before pytest
+loads the plugin, and pytest would warn that it cannot rewrite it.
+"""
 
 from __future__ import annotations
 

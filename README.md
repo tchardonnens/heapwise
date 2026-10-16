@@ -22,10 +22,10 @@ It sees Python objects (including pymalloc's small objects) on every OS, and
 on Linux also `malloc`/`mmap` from C extensions and the libraries they load.
 
 The same run also writes `heapwise-<script>.html`, one self-contained file
-that works offline. Here it is for [`examples/pipeline.py`](examples/pipeline.py)
+that works offline. Here it is for [`examples/pipeline.py`](https://github.com/tchardonnens/heapwise/blob/main/examples/pipeline.py)
 (`heapwise run --exact examples/pipeline.py`):
 
-![heapwise report: key numbers, memory over time, and a cascade of what was using memory at the peak](docs/images/report-overview.png)
+![heapwise report: key numbers, memory over time, and a cascade of what was using memory at the peak](https://raw.githubusercontent.com/tchardonnens/heapwise/main/docs/images/report-overview.png)
 
 The tiles at the top give the key numbers: the peak and who held it, the
 biggest single site, what was left at exit, temporaries and total churn.
@@ -42,13 +42,25 @@ and Temporaries each get their own cascade, and library internals are grouped
 behind the call you made into them unless you untick the box.
 
 <p align="center">
-  <img src="docs/images/report-cascade-dark.png" alt="The cascade in dark mode, with a tooltip on main" width="49%">
-  <img src="docs/images/report-call-tree.png" alt="The call tree: every row's total is the sum of the rows under it" width="49%">
+  <img src="https://raw.githubusercontent.com/tchardonnens/heapwise/main/docs/images/report-cascade-dark.png" alt="The cascade in dark mode, with a tooltip on main" width="49%">
+  <img src="https://raw.githubusercontent.com/tchardonnens/heapwise/main/docs/images/report-call-tree.png" alt="The call tree: every row's total is the sum of the rows under it" width="49%">
 </p>
 
 Hover a box for its file and lines and its share of the total and of its
 caller, or click it to zoom in. The call tree below shows the same numbers as
 rows.
+
+## Install
+
+Install it into the environment your program runs in, so it can import your
+dependencies. Wheels cover Linux, macOS and Windows on Python 3.12+, no Rust
+needed.
+
+```bash
+pip install heapwise
+uv add --dev heapwise                          # or, in a uv project
+uv run --with heapwise heapwise run script.py  # or, try it without installing
+```
 
 ## Use
 
@@ -87,7 +99,7 @@ maturin develop --release
 pytest
 ```
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design and roadmap.
+See [docs/ARCHITECTURE.md](https://github.com/tchardonnens/heapwise/blob/main/docs/ARCHITECTURE.md) for the design and roadmap.
 
 ## License
 
