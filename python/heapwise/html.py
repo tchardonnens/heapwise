@@ -9,8 +9,10 @@ from __future__ import annotations
 import html
 import json
 import os
+import re
+import sysconfig
 
-from ._native import Capture
+from ._native import MAX_STACK_DEPTH, Capture
 
 _VIEWS = ("peak", "leaks", "temporaries")
 
@@ -19,6 +21,54 @@ def _short(path: str, cwd: str | None) -> str:
     if cwd and path.startswith(cwd.rstrip("/\\") + os.sep):
         return path[len(cwd.rstrip("/\\")) + 1 :]
     return path
+
+
+_SITE_DIR = re.compile(r"[\\/](?:site|dist)-packages[\\/]([^\\/]+)")
+_FROZEN = re.compile(r"^<frozen ([\w.]+)>$")
+
+
+def _module_name(component: str) -> str:
+    name = component.split(".", 1)[0] if component.endswith((".py", ".so", ".pyd")) else component
+    return name.split("-", 1)[0]  # foo-1.0.dist-info and the like
+
+
+class _Classifier:
+    """Sorts a file into your code, a third-party package, the stdlib, or
+    heapwise itself, with the package or module name to show."""
+
+    def __init__(self, exclude: list[str]):
+        paths = sysconfig.get_paths()
+        self.stdlib = sorted(
+            {p.rstrip("/\\") for k in ("stdlib", "platstdlib") if (p := paths.get(k))}, key=len, reverse=True
+        )
+        self.tool = os.path.dirname(os.path.abspath(__file__))
+        self.exclude = exclude
+
+    def __call__(self, file: str, cwd: str | None) -> tuple[str, str, str]:
+        """(path to show, kind, package). Library and stdlib paths are shown
+        from the package directory, e.g. numpy/core/numeric.py."""
+        if not file:
+            return file, "std", ""
+        m = _FROZEN.match(file)
+        if m:
+            return file, "std", m.group(1).split(".", 1)[0].lstrip("_")
+        if file.startswith("<"):
+            return file, "std", ""
+        if file.startswith(self.tool):
+            return "heapwise" + file[len(self.tool) :], "tool", "heapwise"
+        m = _SITE_DIR.search(file)
+        if m:
+            return file[m.start(1) :], "lib", _module_name(m.group(1))
+        for root in self.stdlib:
+            if file.startswith(root + os.sep):
+                rest = file[len(root) + 1 :]
+                parts = rest.split(os.sep)
+                if parts[0] == "lib-dynload" and len(parts) > 1:
+                    parts = parts[1:]
+                return rest, "std", _module_name(parts[0])
+        if any(p and file.startswith(p) for p in self.exclude):
+            return os.path.basename(file), "tool", "heapwise"
+        return _short(file, cwd), "mine", ""
 
 
 def _is_mine(file: str, exclude: list[str]) -> bool:
@@ -45,7 +95,8 @@ def report_data(
     # frames on the same line of the same function become one. File names
     # are listed once and referred to by index.
     frames: list[list] = []
-    files: list[str] = []
+    files: list[list] = []  # [short path, kind, package]
+    classify = _Classifier(exclude)
     file_ids: dict[str, int] = {}
     canon: dict[tuple[str, str, int], int] = {}
     remap = []
@@ -55,8 +106,8 @@ def report_data(
             canon[k] = len(frames)
             if file not in file_ids:
                 file_ids[file] = len(files)
-                files.append(_short(file, cwd))
-            frames.append([func, file_ids[file], line, 1 if _is_mine(file, exclude) else 0])
+                files.append(list(classify(file, cwd)))
+            frames.append([func, file_ids[file], line, 1 if files[file_ids[file]][1] == "mine" else 0])
         remap.append(canon[k])
 
     # Stacks go out as the trie the capture keeps (parent, frame per node),
@@ -100,6 +151,7 @@ def report_data(
         "peak_time": capture.peak_seconds,
         "leaked": capture.leaked_bytes,
         "sampled": capture.sample_rate != 0,
+        "max_depth": MAX_STACK_DEPTH,
         "timeline": capture.timeline(400),
         "files": files,
         "frames": frames,
@@ -190,6 +242,20 @@ label { color: var(--muted); font-size: 13px; cursor: pointer; user-select: none
   font-size: 12px; max-width: 420px; display: none; z-index: 10; }
 #tip .loc { opacity: 0.75; }
 .legend { display: flex; gap: 12px; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
+#breakdown { margin: 4px 0 14px; }
+.bd-title { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+.bd-bar { display: flex; height: 10px; border-radius: 5px; overflow: hidden; background: var(--line); }
+.bd-bar span { height: 100%; transition: opacity 160ms ease; }
+.bd-legend { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.chip { border: 1px solid var(--line); background: transparent; color: var(--text); border-radius: 999px; padding: 2px 10px 2px 8px;
+  font: 12px/18px system-ui, -apple-system, "Segoe UI", sans-serif; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+.chip b { font-weight: 600; font-variant-numeric: tabular-nums; }
+.chip[aria-pressed="true"] { border-color: var(--text); }
+.chip .sw { margin: 0; }
+.fn.hl-off { opacity: 0.18; }
+.fn .nat { position: absolute; left: 0; bottom: 0; height: 4px; background: #7c3aed; pointer-events: none; }
+.pkg { display: inline-block; font: 11px/16px system-ui, -apple-system, "Segoe UI", sans-serif; color: #1d1b19; border-radius: 4px;
+  padding: 0 5px; margin-right: 6px; vertical-align: 1px; }
 .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
 table { width: 100%; border-collapse: collapse; }
 th { text-align: right; font-weight: 500; color: var(--muted); font-size: 12px; padding: 4px 8px; border-bottom: 1px solid var(--line); }
@@ -233,10 +299,11 @@ tr.row:hover { background: var(--hover); }
     <div class="controls">
       <div class="tabs" role="tablist" id="tabs"></div>
       <label><input type="checkbox" id="mine" checked> Collapse code that isn't yours</label>
-      <div class="legend">
-        <span><span class="sw" style="background:var(--mine)"></span>your code</span>
-        <span><span class="sw" style="background:var(--lib)"></span>libraries and stdlib</span>
-      </div>
+    </div>
+    <div id="breakdown">
+      <div class="bd-title">Who allocated it. Click a name to highlight its boxes in the graph; a purple underline marks memory allocated by native (C) code.</div>
+      <div class="bd-bar" id="bd-bar"></div>
+      <div class="bd-legend" id="bd-legend"></div>
     </div>
     <h2 id="view-title"></h2>
     <div class="crumbs" id="crumbs"></div>
@@ -258,8 +325,11 @@ const VIEWS = {
   leaks: { label: "Leaks", title: "Still allocated when the program exited", unit: "bytes" },
   temporaries: { label: "Temporaries", title: "Allocations freed right after being made", unit: "count" },
 };
-const NO_STACK = -1, STARTUP = -2, OUTSIDE = -3;
-const SYNTH = { [NO_STACK]: "<no Python stack>", [STARTUP]: "<script startup>", [OUTSIDE]: "<outside your code>" };
+const NO_STACK = -1, STARTUP = -2, OUTSIDE = -3, DEEP = -4;
+const SYNTH = {
+  [NO_STACK]: "<no Python stack>", [STARTUP]: "<script startup>", [OUTSIDE]: "<outside your code>",
+  [DEEP]: "<deep stack, outer frames cut>",
+};
 
 function fmtBytes(n) {
   const u = ["B", "KiB", "MiB", "GiB", "TiB"]; let i = 0; let v = n;
@@ -274,9 +344,62 @@ let state = { view: "peak", mine: true, zoom: [] };
 function frameInfo(id) {
   if (id < 0) return { func: SYNTH[id], loc: "", mine: false, synth: true };
   const [func, fi, line, mine] = D.frames[id];
-  const file = D.files[fi];
+  const file = D.files[fi][0];
   return { func, loc: file ? `${file}:${line}` : "", mine: !!mine, synth: false };
 }
+
+// ---- who is who: your code, each library, the stdlib ----
+const LIB_COLORS = ["#60a5fa", "#2dd4bf", "#4ade80", "#f472b6", "#22d3ee", "#a3e635", "#fbbf24", "#93c5fd"];
+const CATS = {
+  mine: { label: "Your code", color: "#f59e0b" },
+  std: { label: "Python standard library", color: "#a8a29e" },
+  tool: { label: "heapwise launcher", color: "#d6d3d1" },
+  native: { label: "Native code (C extensions)", color: "#a78bfa" },
+  deep: { label: "Deep stacks, outer frames cut", color: "#d6d3d1" },
+  startup: { label: "Python loading your script", color: "#d6d3d1" },
+  outside: { label: "Outside your code", color: "#d6d3d1" },
+};
+const SYNTH_CAT = { [NO_STACK]: "native", [STARTUP]: "startup", [OUTSIDE]: "outside", [DEEP]: "deep" };
+function catOf(id) {
+  if (id < 0) return SYNTH_CAT[id];
+  const [, kind, pkg] = D.files[D.frames[id][1]];
+  return kind === "lib" ? `lib:${pkg}` : kind;
+}
+function catInfo(c) {
+  if (CATS[c]) return CATS[c];
+  const pkg = c.slice(4);
+  return (CATS[c] = { label: pkg, color: LIB_COLORS[libOrder.length % LIB_COLORS.length], lib: true, order: libOrder.push(c) });
+}
+const libOrder = [];
+// Give the libraries that allocate the most the most distinct colors.
+(function assignLibColors() {
+  const size = new Map();
+  for (const flat of Object.values(D.views)) {
+    if (!flat) continue;
+    for (let i = 0; i < flat.length; i += 4) {
+      let n = flat[i];
+      while (n !== 0) {
+        const c = catOf(D.nodes[2 * n + 1]);
+        if (c.startsWith("lib:")) size.set(c, (size.get(c) || 0) + flat[i + 1] + flat[i + 2]);
+        n = D.nodes[2 * n];
+      }
+    }
+  }
+  [...size.entries()].sort((a, b) => b[1] - a[1]).forEach(([c]) => catInfo(c));
+})();
+function pkgOf(id) { return id < 0 ? "" : D.files[D.frames[id][1]][2]; }
+function catDescription(id) {
+  const c = catOf(id), pkg = pkgOf(id);
+  if (c === "mine") return "your code";
+  if (c.startsWith("lib:")) return `library: ${pkg}`;
+  if (c === "std") return pkg ? `Python standard library (${pkg})` : "Python standard library";
+  return catInfo(c).label;
+}
+function boxLabel(id, func) {
+  const c = catOf(id), pkg = pkgOf(id);
+  return (c.startsWith("lib:") || c === "std") && pkg && !func.startsWith(pkg) ? `${pkg} · ${func}` : func;
+}
+let highlight = null;
 
 // Frames of a trie node, outermost first.
 function pathOf(node) {
@@ -291,8 +414,11 @@ function collapse(path) {
   if (!path.length) return [NO_STACK];
   const mine = path.map(id => D.frames[id][3] === 1);
   if (!mine.some(Boolean)) {
-    const startup = path.some(id => /(^<frozen runpy>$|[\\/]runpy\.py$)/.test(D.files[D.frames[id][1]]));
-    return [startup ? STARTUP : OUTSIDE, path[path.length - 1]];
+    const startup = path.some(id => /(^<frozen runpy>$|^runpy\.py$)/.test(D.files[D.frames[id][1]][0]));
+    // The walk keeps the innermost max_depth frames, so a deep library call
+    // (nested imports, say) can lose the frames of yours at its root.
+    const kind = startup ? STARTUP : path.length >= D.max_depth ? DEEP : OUTSIDE;
+    return [kind, path[path.length - 1]];
   }
   const out = [];
   let i = mine.indexOf(true);
@@ -386,6 +512,7 @@ function showTip(e, node, rootTotal) {
   const pct = rootTotal ? (100 * node.total / rootTotal).toFixed(1) : "0";
   const native = VIEWS[state.view].unit === "bytes" && node.native ? ` · ${fmtBytes(node.native)} native` : "";
   tip.innerHTML = `<b>${esc(f.func)}</b> <span class="loc">${esc(f.loc)}</span><br>` +
+    `<span class="sw" style="background:${catInfo(catOf(node.id)).color}"></span>${esc(catDescription(node.id))}<br>` +
     `${fmt(node.total)} (${pct}%)${native}` + (node.self ? ` · ${fmt(node.self)} allocated here` : "");
   tip.style.display = "block";
   const r = tip.getBoundingClientRect();
@@ -438,9 +565,18 @@ function drawFlame(root) {
     div.className = "fn" + (dim ? " dim" : "");
     div.dataset.k = key(path);
     div.style.left = x + "px"; div.style.top = d * RH + "px"; div.style.width = Math.max(w, 1) + "px";
-    const hue = f.synth ? "var(--synthetic)" : f.mine ? (d % 2 ? "var(--mine)" : "var(--mine-2)") : (d % 2 ? "var(--lib)" : "var(--lib-2)");
-    div.style.background = hue;
-    if (w > 30) div.textContent = f.func;
+    const cat = catOf(node.id);
+    div.style.background = catInfo(cat).color;
+    if (d % 2) div.style.filter = "brightness(0.93)";  // tell neighbouring rows apart
+    if (highlight && cat !== highlight && !dim) div.classList.add("hl-off");
+    if (w > 30) div.textContent = boxLabel(node.id, f.func);
+    // Purple underline: the part of this box's memory that native (C) code allocated.
+    if (VIEWS[state.view].unit === "bytes" && node.native > 0 && node.total > 0) {
+      const nat = document.createElement("i");
+      nat.className = "nat";
+      nat.style.width = Math.min(100, 100 * node.native / node.total) + "%";
+      div.appendChild(nat);
+    }
     div.onmousemove = e => showTip(e, node, root.total);
     div.onmouseleave = () => { tip.style.display = "none"; };
     div.onclick = () => { state.zoom = path; tip.style.display = "none"; animateZoom = true; render(); };
@@ -562,7 +698,7 @@ function drawTree(root, enter) {
       cell(`<span class="bar" style="width:${Math.max(1, pct * 0.4)}px"></span>${pct.toFixed(1)}%`) +
       cell(k.self ? fmt(k.self) : "") +
       (bytes ? cell(k.native ? fmtBytes(k.native) : "") : "") +
-      cell(`${tw}<span class="${f.mine ? "" : "lib"}">${esc(f.func)}</span><span class="loc2">${esc(f.loc)}</span>`,
+      cell(`${tw}${badge(k.id)}<span class="${f.mine ? "" : "lib"}">${esc(f.func)}</span><span class="loc2">${esc(f.loc)}</span>`,
         ` class="mono" style="padding-left:${8 + d * 16}px"`) + `</tr>`;
   }
   t.innerHTML = html;
@@ -588,6 +724,56 @@ function drawTree(root, enter) {
   });
 }
 
+function badge(id) {
+  const c = catOf(id);
+  if (c === "mine") return "";
+  const text = c.startsWith("lib:") ? pkgOf(id) : c === "std" ? (pkgOf(id) ? `stdlib · ${pkgOf(id)}` : "stdlib") : "";
+  return text ? `<span class="pkg" style="background:${catInfo(c).color}">${esc(text)}</span>` : "";
+}
+
+// ---- breakdown: who allocated the memory in this view ----
+function drawBreakdown() {
+  const flat = D.views[state.view] || [];
+  const unitBytes = VIEWS[state.view].unit === "bytes";
+  const by = new Map();
+  let total = 0;
+  const add = (c, v) => { if (v > 0) { by.set(c, (by.get(c) || 0) + v); total += v; } };
+  for (let i = 0; i < flat.length; i += 4) {
+    let v = unitBytes ? flat[i + 1] : flat[i + 2];
+    if (!v) continue;
+    // malloc/mmap from C code: we know it was native, not which extension,
+    // so it gets its own share rather than the calling Python function's.
+    if (unitBytes) { add("native", flat[i + 3]); v -= flat[i + 3]; }
+    const path = pathOf(flat[i]);
+    let c;
+    if (!path.length) c = "native";
+    else {
+      c = catOf(path[path.length - 1]);
+      if (c === "std" || c === "tool") {
+        // Stdlib called from your code counts as the stdlib; with no frame
+        // of yours anywhere it is the interpreter starting your script.
+        const head = collapse(path)[0];
+        if (head === STARTUP) c = "startup";
+        else if (head === DEEP) c = "deep";
+      }
+    }
+    add(c, v);
+  }
+  const items = [...by.entries()].sort((a, b) => b[1] - a[1]);
+  if (highlight && !by.has(highlight)) highlight = null;
+  document.getElementById("bd-bar").innerHTML = items.map(([c, v]) =>
+    `<span title="${esc(catInfo(c).label)}" style="width:${100 * v / total}%;background:${catInfo(c).color};opacity:${!highlight || highlight === c ? 1 : 0.25}"></span>`).join("");
+  const legend = document.getElementById("bd-legend");
+  legend.innerHTML = items.map(([c, v]) => {
+    const pct = 100 * v / total;
+    return `<button class="chip" data-c="${esc(c)}" aria-pressed="${highlight === c}"><span class="sw" style="background:${catInfo(c).color}"></span>` +
+      `${esc(catInfo(c).label)} <b>${pct < 0.1 ? "<0.1" : pct.toFixed(1)}%</b></button>`;
+  }).join("");
+  legend.querySelectorAll(".chip").forEach(b => {
+    b.onclick = () => { highlight = highlight === b.dataset.c ? null : b.dataset.c; drawBreakdown(); drawFlame(buildTree()); };
+  });
+}
+
 const reduceMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 let lastTreeKey = "";
@@ -597,6 +783,7 @@ function render() {
   const root = buildTree();
   const whole = state.view === "peak" ? `${fmtBytes(D.peak)} at peak` : state.view === "leaks" ? `${fmtBytes(D.leaked)} at exit` : `${fmtCount(root.total)} allocations`;
   document.getElementById("view-title").innerHTML = `${esc(v.title)} <span class="hint">${esc(whole)}${D.sampled && v.unit === "bytes" ? ", estimated from samples" : ""}</span>`;
+  drawBreakdown();
   drawFlame(root);
   const tk = `${state.view}/${state.mine}`;
   if (tk !== lastTreeKey) { autoOpen(root); lastTreeKey = tk; }

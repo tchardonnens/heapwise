@@ -100,3 +100,39 @@ def test_startup_allocations_get_one_label(tmp_path):
     )
     assert "<frozen runpy>" not in proc.stderr
     assert "<script startup>" in proc.stderr
+
+
+def test_files_are_sorted_into_mine_libraries_and_stdlib(tmp_path):
+    import os
+    import sysconfig
+
+    from heapwise.html import _Classifier
+
+    c = _Classifier(heapwise.default_exclude())
+    std = sysconfig.get_paths()["stdlib"]
+    site = os.path.join(str(tmp_path), "venv", "lib", "site-packages")
+    assert c(os.path.join(site, "numpy", "core", "numeric.py"), None) == (
+        os.path.join("numpy", "core", "numeric.py"), "lib", "numpy"
+    )
+    assert c(os.path.join(site, "six.py"), None)[1:] == ("lib", "six")
+    assert c(os.path.join(std, "json", "encoder.py"), None)[1:] == ("std", "json")
+    assert c("<frozen importlib._bootstrap>", None)[1:] == ("std", "importlib")
+    assert c(heapwise.__file__, None)[1:] == ("tool", "heapwise")
+    app = os.path.join(str(tmp_path), "proj", "app.py")
+    assert c(app, os.path.join(str(tmp_path), "proj")) == ("app.py", "mine", "")
+
+
+def test_page_marks_library_frames():
+    import json as json_mod
+
+    def dump():
+        return [json_mod.dumps({"k": list(range(50))}) for _ in range(2000)]
+
+    with heapwise.profile() as result:
+        keep = dump()
+    data = report_data(result[0], "t", heapwise.default_exclude())
+    kinds = {(kind, pkg) for _, kind, pkg in data["files"]}
+    assert ("std", "json") in kinds
+    assert ("mine", "") in kinds
+    assert data["max_depth"] == heapwise._native.MAX_STACK_DEPTH
+    del keep

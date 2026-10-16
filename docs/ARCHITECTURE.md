@@ -167,6 +167,16 @@ keeps only the call the user made into it (do #9). Allocations made while
 runpy compiles the script, before any user frame exists, are one
 `<script startup>` row in both outputs.
 
+To make "my program vs libraries" obvious, each file is classified as your
+code, a third-party package (named from its `site-packages` directory), the
+stdlib (named by module) or heapwise itself. Each library gets its own color
+and a badge in the call tree, library paths are shown from the package
+directory, and a "who allocated it" bar splits the view by the innermost
+frame's owner, with native (C) bytes as their own share; clicking a name
+highlights its boxes. A purple underline on a box marks its native share.
+Stacks with no frame of yours that hit the walk's depth limit are labelled
+as cut rather than "outside your code".
+
 ## Status of the scaffold
 
 Working today (Linux, CPython 3.13, 30 tests passing):
