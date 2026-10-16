@@ -21,9 +21,29 @@ Peak: what was live at the high-water mark
 It sees Python objects (including pymalloc's small objects) on every OS, and
 on Linux also `malloc`/`mmap` from C extensions and the libraries they load.
 
-The same run writes `heapwise-etl.html`: one self-contained file (it works
-offline) with the memory timeline, a flame graph and a call tree for each of
-Peak, Leaks and Temporaries. Code that isn't yours is collapsed by default.
+The same run also writes `heapwise-<script>.html`, one self-contained file
+that works offline. Here it is for [`examples/pipeline.py`](examples/pipeline.py)
+(`heapwise run --exact examples/pipeline.py`):
+
+![heapwise report: findings, memory over time, and a cascade of what was using memory at the peak](docs/images/report-overview.png)
+
+Read the cascade top to bottom. Each box is a function, as wide as the memory
+it accounts for, and it splits exactly into the functions it called plus what
+it allocated itself (the striped boxes). Color says who allocated the memory:
+blue for your code, orange for third-party libraries, gray for the standard
+library and green for C code such as numpy's buffers. The bar above it gives
+the same split in numbers; click an owner to highlight its boxes. Peak, Leaks
+and Temporaries each get their own cascade, and library internals are grouped
+behind the call you made into them unless you untick the box.
+
+<p align="center">
+  <img src="docs/images/report-cascade-dark.png" alt="The cascade in dark mode, with a tooltip on main" width="49%">
+  <img src="docs/images/report-call-tree.png" alt="The call tree: every row's total is the sum of the rows under it" width="49%">
+</p>
+
+Hover a box for its file and lines and its share of the total and of its
+caller, or click it to zoom in. The call tree below shows the same numbers as
+rows.
 
 ## Use
 

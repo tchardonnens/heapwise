@@ -154,28 +154,31 @@ Process RSS is printed as context only, never attributed to lines (don't #1).
 
 The same run also writes `heapwise-<script>.html` (`python/heapwise/html.py`,
 do #14): one self-contained file, no network, with the findings, a memory
-timeline, Peak / Leaks / Temporaries tabs, an icicle flame graph (click to
-zoom) and an expandable call tree. Rust hands over `Capture.frames()`,
-`Capture.stack_nodes()` (the stack trie) and `Capture.stack_values(view)`;
-the page ships the trie restricted to nodes a view uses, with file names
-listed once, so 640k stacks come to about 6 MB and render in well under a
-second. Callees too narrow to draw are one "N more" box, and the call tree
-lists at most 200 children per node with an "N more" row. The page merges frames
-on the same line and, by default, collapses code that isn't the user's: the
-launcher and runpy at the root are dropped, and each run of library frames
-keeps only the call the user made into it (do #9). Allocations made while
-runpy compiles the script, before any user frame exists, are one
-`<script startup>` row in both outputs.
+timeline, and for each of Peak / Leaks / Temporaries an owner split, a cascade
+(icicle) and a call tree.
 
-To make "my program vs libraries" obvious, each file is classified as your
-code, a third-party package (named from its `site-packages` directory), the
-stdlib (named by module) or heapwise itself. Each library gets its own color
-and a badge in the call tree, library paths are shown from the package
-directory, and a "who allocated it" bar splits the view by the innermost
-frame's owner, with native (C) bytes as their own share; clicking a name
-highlights its boxes. A purple underline on a box marks its native share.
-Stacks with no frame of yours that hit the walk's depth limit are labelled
-as cut rather than "outside your code".
+- **Cascade.** Row 0 is the whole view; each box is one function (frames on
+  different lines of the same function are merged) and splits exactly into
+  its callees plus what it allocated itself: Python objects ("allocated
+  directly", striped) and C allocations made while it ran ("C code called
+  in", from the native byte counts). So every box is as wide as the boxes
+  under it put together; children too narrow to draw share one "N more" box.
+  Clicking zooms; the call tree shows the same parts as rows.
+- **Color means owner and nothing else**: your code, third-party libraries,
+  stdlib, C code, Python internals. The owner hues are the first three
+  categorical slots of the dataviz reference palette, which pass the
+  colour-vision checks all-pairs in light and dark mode; the timeline and the
+  rest of the chrome stay in ink.
+- **Owners** are worked out per file: a `site-packages` directory names the
+  package, stdlib files are named by module, `<frozen x>` is stdlib x.
+  "Group library internals" (on by default) keeps your frames and only the
+  first frame of each run of library frames (the call you made); stacks with
+  no frame of yours are "Python loading your script" or, when they hit the
+  walk's depth limit, "deep call stack".
+- **Data**: Rust hands over `Capture.frames()`, `Capture.stack_nodes()` (the
+  stack trie) and `Capture.stack_values(view)`; the page ships the trie
+  restricted to nodes a view uses with file names listed once, so 640k stacks
+  come to about 6 MB and render in well under a second.
 
 ## Status of the scaffold
 

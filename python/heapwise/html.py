@@ -183,6 +183,8 @@ def write_html(
     return os.fspath(path)
 
 
+
+
 _TEMPLATE = r"""<!doctype html>
 <html lang="en">
 <head>
@@ -190,130 +192,167 @@ _TEMPLATE = r"""<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{title}}</title>
 <style>
+/* Color carries one meaning only: who owns the memory. Everything else is ink
+   and hairlines. Owner hues are the first three categorical slots of the
+   reference palette (validated all-pairs for color-vision deficiency). */
 :root {
-  --bg: #fbfaf8; --panel: #ffffff; --text: #1d1b19; --muted: #6b665f; --line: #e6e2dc;
-  --accent: #c2410c; --mine: #f59e0b; --mine-2: #ea580c; --lib: #94a3b8; --lib-2: #64748b;
-  --synthetic: #d6d3d1; --native: #7c3aed; --area: rgba(194, 65, 12, 0.16); --hover: rgba(0,0,0,0.04);
+  color-scheme: light;
+  --page: #f9f9f7; --surface: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+  --grid: #e1e0d9; --axis: #c3c2b7; --ring: rgba(11, 11, 11, 0.10); --hover: rgba(11, 11, 11, 0.04);
+  --mine: #2a78d6; --mine-ink: #ffffff;
+  --lib: #eb6834; --lib-ink: #0b0b0b;
+  --native: #1baf7a; --native-ink: #0b0b0b;
+  --std: #c3c2b7; --std-ink: #0b0b0b;
+  --other: #e1e0d9; --other-ink: #52514e;
+  --root: #f0efec; --root-ink: #0b0b0b;
 }
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bg: #161514; --panel: #1f1e1c; --text: #ece9e4; --muted: #a39e96; --line: #34322f;
-    --accent: #fb923c; --mine: #f59e0b; --mine-2: #ea580c; --lib: #94a3b8; --lib-2: #7c8ba1;
-    --synthetic: #44403c; --native: #a78bfa; --area: rgba(251, 146, 60, 0.18); --hover: rgba(255,255,255,0.05);
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --ring: rgba(255, 255, 255, 0.10); --hover: rgba(255, 255, 255, 0.05);
+    --mine: #3987e5; --mine-ink: #0b0b0b;
+    --lib: #d95926; --lib-ink: #0b0b0b;
+    --native: #199e70; --native-ink: #0b0b0b;
+    --std: #52514e; --std-ink: #f0efec;
+    --other: #2c2c2a; --other-ink: #c3c2b7;
+    --root: #383835; --root-ink: #f0efec;
   }
 }
 :root[data-theme="dark"] {
-  --bg: #161514; --panel: #1f1e1c; --text: #ece9e4; --muted: #a39e96; --line: #34322f;
-  --accent: #fb923c; --mine: #f59e0b; --mine-2: #ea580c; --lib: #94a3b8; --lib-2: #7c8ba1;
-  --synthetic: #44403c; --native: #a78bfa; --area: rgba(251, 146, 60, 0.18); --hover: rgba(255,255,255,0.05);
+  color-scheme: dark;
+  --page: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+  --grid: #2c2c2a; --axis: #383835; --ring: rgba(255, 255, 255, 0.10); --hover: rgba(255, 255, 255, 0.05);
+  --mine: #3987e5; --mine-ink: #0b0b0b;
+  --lib: #d95926; --lib-ink: #0b0b0b;
+  --native: #199e70; --native-ink: #0b0b0b;
+  --std: #52514e; --std-ink: #f0efec;
+  --other: #2c2c2a; --other-ink: #c3c2b7;
+  --root: #383835; --root-ink: #f0efec;
 }
 * { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--text);
-  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+body { margin: 0; background: var(--page); color: var(--ink); font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
 main { max-width: 1200px; margin: 0 auto; padding: 24px 16px 64px; }
-h1 { font-size: 20px; margin: 0 0 2px; }
-.sub { color: var(--muted); font-size: 13px; }
-.findings { margin: 16px 0 20px; padding: 14px 16px; background: var(--panel); border: 1px solid var(--line);
-  border-left: 3px solid var(--accent); border-radius: 8px; }
-.findings p { margin: 4px 0; }
-.findings .note { color: var(--muted); font-size: 13px; }
-section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; margin-bottom: 16px; }
-h2 { font-size: 15px; margin: 0 0 10px; display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
-h2 .hint { font-weight: 400; color: var(--muted); font-size: 12px; }
-code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+h1 { font-size: 20px; margin: 0 0 2px; font-weight: 600; }
+.sub { color: var(--ink-2); font-size: 13px; }
+.panel { background: var(--surface); border: 1px solid var(--ring); border-radius: 10px; padding: 16px; margin-top: 16px; }
+.findings p { margin: 2px 0; }
+.findings .note { color: var(--ink-2); font-size: 13px; margin-top: 6px; }
+h2 { font-size: 15px; font-weight: 600; margin: 0 0 4px; }
+.hint { color: var(--ink-2); font-size: 13px; margin: 0 0 12px; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+
 #timeline { width: 100%; height: 140px; display: block; }
-#timeline text { fill: var(--muted); font-size: 11px; }
-.controls { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin-bottom: 12px; }
-.tabs { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
-.tabs button { border: 0; background: transparent; color: var(--text); padding: 6px 12px; font: inherit; cursor: pointer; }
-.tabs button + button { border-left: 1px solid var(--line); }
-.tabs button[aria-selected="true"] { background: var(--accent); color: #fff; }
+#timeline text { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+
+.controls { display: flex; flex-wrap: wrap; gap: 10px 20px; align-items: center; margin-bottom: 14px; }
+.tabs { display: inline-flex; background: var(--page); border: 1px solid var(--ring); border-radius: 8px; padding: 2px; }
+.tabs button { border: 0; background: transparent; color: var(--ink-2); padding: 5px 14px; font: inherit; border-radius: 6px; cursor: pointer; }
+.tabs button[aria-selected="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 0 0 1px var(--ring); font-weight: 600; }
 .tabs button:disabled { color: var(--muted); cursor: not-allowed; }
-label { color: var(--muted); font-size: 13px; cursor: pointer; user-select: none; }
-.crumbs { font-size: 12px; color: var(--muted); margin-bottom: 6px; min-height: 18px; }
-.crumbs a { color: var(--accent); cursor: pointer; text-decoration: none; }
+label { color: var(--ink-2); font-size: 13px; cursor: pointer; user-select: none; display: inline-flex; gap: 6px; align-items: center; }
+
+/* Owner legend + split bar */
+.split { display: flex; height: 8px; gap: 2px; margin: 4px 0 10px; }
+.split span { border-radius: 4px; min-width: 2px; transition: opacity 160ms ease; }
+.owners { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 18px; }
+.chip { border: 1px solid var(--ring); background: var(--surface); color: var(--ink); border-radius: 999px; padding: 3px 12px 3px 8px;
+  font: 13px/18px system-ui, -apple-system, "Segoe UI", sans-serif; cursor: pointer; display: inline-flex; align-items: center; gap: 7px; }
+.chip .v { color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.chip .what { color: var(--muted); font-size: 12px; }
+.chip[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--ink); border-color: transparent; }
+.sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; flex: none; }
+.chip, .chip .v { white-space: nowrap; }
+@media (max-width: 640px) { .chip .what { display: none; } .tabs button { padding: 5px 10px; } }
+
+/* Cascade: one row per call depth; every box is exactly as wide as the
+   boxes under it put together. */
+.crumbs { font-size: 13px; color: var(--ink-2); margin-bottom: 8px; min-height: 20px; }
+.crumbs a { color: var(--ink); cursor: pointer; text-decoration: underline; text-decoration-color: var(--axis); text-underline-offset: 3px; }
 #flame { position: relative; width: 100%; overflow: hidden; }
-.fn { position: absolute; height: 19px; padding: 0 4px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
-  font: 11px/19px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #1d1b19; cursor: pointer;
-  border-right: 1px solid var(--panel); border-bottom: 1px solid var(--panel); }
-.fn:hover { filter: brightness(1.12); }
-.fn.dim { opacity: 0.35; }
-#tip { position: fixed; pointer-events: none; background: var(--text); color: var(--bg); padding: 6px 8px; border-radius: 6px;
-  font-size: 12px; max-width: 420px; display: none; z-index: 10; }
-#tip .loc { opacity: 0.75; }
-.legend { display: flex; gap: 12px; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
-#breakdown { margin: 4px 0 14px; }
-.bd-title { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
-.bd-bar { display: flex; height: 10px; border-radius: 5px; overflow: hidden; background: var(--line); }
-.bd-bar span { height: 100%; transition: opacity 160ms ease; }
-.bd-legend { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-.chip { border: 1px solid var(--line); background: transparent; color: var(--text); border-radius: 999px; padding: 2px 10px 2px 8px;
-  font: 12px/18px system-ui, -apple-system, "Segoe UI", sans-serif; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
-.chip b { font-weight: 600; font-variant-numeric: tabular-nums; }
-.chip[aria-pressed="true"] { border-color: var(--text); }
-.chip .sw { margin: 0; }
-.fn.hl-off { opacity: 0.18; }
-.fn .nat { position: absolute; left: 0; bottom: 0; height: 4px; background: #7c3aed; pointer-events: none; }
-.pkg { display: inline-block; font: 11px/16px system-ui, -apple-system, "Segoe UI", sans-serif; color: #1d1b19; border-radius: 4px;
-  padding: 0 5px; margin-right: 6px; vertical-align: 1px; }
-.sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+.box { position: absolute; height: 24px; padding: 0 6px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  font: 12px/24px system-ui, -apple-system, "Segoe UI", sans-serif; border-radius: 4px; cursor: pointer; }
+.box .val { opacity: 0.8; margin-left: 6px; font-variant-numeric: tabular-nums; }
+.box:hover { box-shadow: inset 0 0 0 2px var(--ink); }
+.box.mine { background: var(--mine); color: var(--mine-ink); }
+.box.lib { background: var(--lib); color: var(--lib-ink); }
+.box.native { background: var(--native); color: var(--native-ink); }
+.box.std { background: var(--std); color: var(--std-ink); }
+.box.other { background: var(--other); color: var(--other-ink); }
+.box.root { background: var(--root); color: var(--root-ink); font-weight: 600; }
+/* Memory allocated directly in a function (not in something it called). */
+.box.here { background-image: repeating-linear-gradient(135deg, rgba(255,255,255,0.28) 0 2px, transparent 2px 7px); cursor: default; }
+.box.more { cursor: default; }
+.box.off { opacity: 0.2; }
+.box.anim { transition: left 260ms ease, width 260ms ease, top 260ms ease, opacity 200ms ease; }
+.box.fade { opacity: 0; }
+
+#tip { position: fixed; pointer-events: none; background: var(--ink); color: var(--surface); padding: 8px 10px; border-radius: 8px;
+  font-size: 12px; line-height: 1.5; max-width: 440px; display: none; z-index: 10; }
+#tip .loc { opacity: 0.7; }
+#tip .sw { vertical-align: -1px; margin-right: 5px; }
+
+/* Call tree */
 table { width: 100%; border-collapse: collapse; }
-th { text-align: right; font-weight: 500; color: var(--muted); font-size: 12px; padding: 4px 8px; border-bottom: 1px solid var(--line); }
+th { text-align: right; font-weight: 500; color: var(--muted); font-size: 12px; padding: 6px 8px; border-bottom: 1px solid var(--grid); }
 th:last-child, td:last-child { text-align: left; width: 100%; }
 td { text-align: right; padding: 0 8px; white-space: nowrap; font-variant-numeric: tabular-nums; }
-td > .c { padding: 2px 0; overflow: hidden; max-height: 24px; }
+td > .c { padding: 3px 0; overflow: hidden; max-height: 28px; }
+tr.row { cursor: pointer; }
+tr.row:hover, tr.here:hover { background: var(--hover); }
+.tw { display: inline-block; width: 14px; text-align: center; color: var(--muted); transition: transform 180ms ease; }
+.tw.open { transform: rotate(90deg); }
+.fname .sw { margin-right: 7px; vertical-align: -1px; }
+.loc2 { color: var(--muted); margin-left: 8px; }
+.pkg { color: var(--ink-2); font-size: 12px; margin-right: 6px; }
+.dim { color: var(--ink-2); }
+.pct { display: inline-flex; align-items: center; gap: 8px; justify-content: flex-end; }
+.pct i { display: inline-block; height: 6px; border-radius: 3px; background: var(--axis); }
+.empty { color: var(--muted); padding: 12px 0; }
+.scroll { overflow-x: auto; }
 tr.enter td > .c { animation: row-in 180ms ease-out both; animation-delay: var(--delay, 0ms); }
 tr.leave td > .c { animation: row-out 150ms ease-in both; }
 @keyframes row-in { from { max-height: 0; padding: 0; opacity: 0; transform: translateY(-4px); } }
 @keyframes row-out { to { max-height: 0; padding: 0; opacity: 0; } }
-.fn.anim { transition: left 260ms ease, width 260ms ease, top 260ms ease, opacity 200ms ease; }
-.fn.fade { opacity: 0; }
 .fade-in { animation: fade-in 200ms ease-out both; }
 @keyframes fade-in { from { opacity: 0.25; } }
 @media (prefers-reduced-motion: reduce) {
   tr.enter td > .c, tr.leave td > .c, .fade-in { animation: none; }
-  .fn.anim, .tw { transition: none; }
+  .box.anim, .tw, .split span { transition: none; }
 }
-tr.row:hover { background: var(--hover); }
-.tw { cursor: pointer; display: inline-block; width: 14px; text-align: center; color: var(--muted); transition: transform 180ms ease; }
-.tw.open { transform: rotate(90deg); }
-.lib { color: var(--muted); }
-.loc2 { color: var(--muted); margin-left: 8px; }
-.bar { display: inline-block; height: 8px; background: var(--accent); border-radius: 2px; vertical-align: 0; margin-right: 6px; opacity: 0.7; }
-.empty { color: var(--muted); padding: 12px 0; }
-.scroll { overflow-x: auto; }
+@media (forced-colors: active) { .box { border: 1px solid CanvasText; } }
 </style>
 </head>
 <body>
 <main>
   <h1 id="title"></h1>
   <div class="sub" id="header"></div>
-  <div class="findings" id="findings"></div>
+  <div class="panel findings" id="findings"></div>
 
-  <section>
-    <h2>Memory over time <span class="hint" id="tl-hint"></span></h2>
+  <div class="panel" id="p-time">
+    <h2>Memory over time</h2>
+    <p class="hint" id="tl-hint"></p>
     <svg id="timeline" role="img" aria-label="Live heap memory over time"></svg>
-  </section>
+  </div>
 
-  <section>
+  <div class="panel" id="p-cascade">
     <div class="controls">
       <div class="tabs" role="tablist" id="tabs"></div>
-      <label><input type="checkbox" id="mine" checked> Collapse code that isn't yours</label>
-    </div>
-    <div id="breakdown">
-      <div class="bd-title">Who allocated it. Click a name to highlight its boxes in the graph; a purple underline marks memory allocated by native (C) code.</div>
-      <div class="bd-bar" id="bd-bar"></div>
-      <div class="bd-legend" id="bd-legend"></div>
+      <label><input type="checkbox" id="group" checked> Group library internals</label>
     </div>
     <h2 id="view-title"></h2>
+    <p class="hint" id="view-hint"></p>
+    <div class="split" id="split" aria-hidden="true"></div>
+    <div class="owners" id="owners"></div>
     <div class="crumbs" id="crumbs"></div>
     <div id="flame"></div>
-  </section>
+  </div>
 
-  <section>
-    <h2>Call tree <span class="hint">click a row to expand, or a function in the flame graph to zoom</span></h2>
+  <div class="panel" id="p-tree">
+    <h2>Call tree</h2>
+    <p class="hint">The same numbers as the cascade. Each row's total is the sum of the rows under it; click a row to open it.</p>
     <div class="scroll"><table id="tree"></table></div>
-  </section>
+  </div>
 </main>
 <div id="tip"></div>
 <script type="application/json" id="data">{{data}}</script>
@@ -321,15 +360,25 @@ tr.row:hover { background: var(--hover); }
 "use strict";
 const D = JSON.parse(document.getElementById("data").textContent);
 const VIEWS = {
-  peak: { label: "Peak", title: "What was live at the high-water mark", unit: "bytes" },
-  leaks: { label: "Leaks", title: "Still allocated when the program exited", unit: "bytes" },
-  temporaries: { label: "Temporaries", title: "Allocations freed right after being made", unit: "count" },
+  peak: { label: "Peak", title: "What was using memory at the peak", root: "All memory at the peak", unit: "bytes" },
+  leaks: { label: "Leaks", title: "What was still allocated when the program ended", root: "All memory left at exit", unit: "bytes" },
+  temporaries: { label: "Temporaries", title: "Where short-lived allocations come from", root: "All temporary allocations", unit: "count" },
 };
 const NO_STACK = -1, STARTUP = -2, OUTSIDE = -3, DEEP = -4;
 const SYNTH = {
-  [NO_STACK]: "<no Python stack>", [STARTUP]: "<script startup>", [OUTSIDE]: "<outside your code>",
-  [DEEP]: "<deep stack, outer frames cut>",
+  [NO_STACK]: "C code with no Python caller",
+  [STARTUP]: "Python loading your script",
+  [OUTSIDE]: "Outside your code",
+  [DEEP]: "Deep call stack (outer frames cut)",
 };
+const OWNERS = {
+  mine: { label: "Your code", what: "functions in your files" },
+  lib: { label: "Libraries", what: "" },
+  std: { label: "Python standard library", what: "json, re, collections…" },
+  native: { label: "C code", what: "malloc/mmap from extensions" },
+  other: { label: "Python internals", what: "startup, imports" },
+};
+const OWNER_ORDER = ["mine", "lib", "std", "native", "other"];
 
 function fmtBytes(n) {
   const u = ["B", "KiB", "MiB", "GiB", "TiB"]; let i = 0; let v = n;
@@ -338,68 +387,60 @@ function fmtBytes(n) {
 }
 const fmtCount = n => n.toLocaleString("en-US");
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const bytesView = () => VIEWS[state.view].unit === "bytes";
+const fmt = v => bytesView() ? fmtBytes(v) : `${fmtCount(v)}×`;
+const pctOf = (v, whole) => whole ? 100 * v / whole : 0;
+const fmtPct = p => p >= 10 ? `${p.toFixed(0)}%` : p >= 0.1 ? `${p.toFixed(1)}%` : p > 0 ? "<0.1%" : "0%";
+const reduceMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-let state = { view: "peak", mine: true, zoom: [] };
+let state = { view: "peak", group: true, zoom: [], highlight: null };
 
+// ---- frames and who owns them ----
+function fileOf(id) { return D.files[D.frames[id][1]]; }  // [path, kind, package]
 function frameInfo(id) {
-  if (id < 0) return { func: SYNTH[id], loc: "", mine: false, synth: true };
-  const [func, fi, line, mine] = D.frames[id];
-  const file = D.files[fi][0];
-  return { func, loc: file ? `${file}:${line}` : "", mine: !!mine, synth: false };
+  if (id < 0) return { func: SYNTH[id], loc: "", pkg: "" };
+  const [raw, , line] = D.frames[id];
+  const [file, , pkg] = fileOf(id);
+  // "<module>" is a file's top-level code; say which file.
+  const base = file.split(/[\\/]/).pop().replace(/\.py$/, "");
+  const func = raw === "<module>" && base ? `${base} (top level)` : raw;
+  return { func, loc: file ? `${file}:${line}` : "", pkg };
+}
+function ownerOf(id) {
+  if (id === NO_STACK) return "native";
+  if (id < 0) return "other";
+  const kind = fileOf(id)[1];
+  return kind === "tool" ? "other" : kind;
+}
+function ownerText(id) {
+  const o = ownerOf(id), pkg = frameInfo(id).pkg;
+  if (o === "mine") return "Your code";
+  if (o === "lib") return `Library: ${pkg}`;
+  if (o === "std") return pkg ? `Python standard library (${pkg})` : "Python standard library";
+  return OWNERS[o].label;
+}
+function frameLabel(id) {
+  const f = frameInfo(id), o = ownerOf(id);
+  return (o === "lib" || o === "std") && f.pkg && !f.func.startsWith(f.pkg) && !f.func.endsWith("(top level)")
+    ? `${f.pkg}.${f.func}` : f.func;
 }
 
-// ---- who is who: your code, each library, the stdlib ----
-const LIB_COLORS = ["#60a5fa", "#2dd4bf", "#4ade80", "#f472b6", "#22d3ee", "#a3e635", "#fbbf24", "#93c5fd"];
-const CATS = {
-  mine: { label: "Your code", color: "#f59e0b" },
-  std: { label: "Python standard library", color: "#a8a29e" },
-  tool: { label: "heapwise launcher", color: "#d6d3d1" },
-  native: { label: "Native code (C extensions)", color: "#a78bfa" },
-  deep: { label: "Deep stacks, outer frames cut", color: "#d6d3d1" },
-  startup: { label: "Python loading your script", color: "#d6d3d1" },
-  outside: { label: "Outside your code", color: "#d6d3d1" },
-};
-const SYNTH_CAT = { [NO_STACK]: "native", [STARTUP]: "startup", [OUTSIDE]: "outside", [DEEP]: "deep" };
-function catOf(id) {
-  if (id < 0) return SYNTH_CAT[id];
-  const [, kind, pkg] = D.files[D.frames[id][1]];
-  return kind === "lib" ? `lib:${pkg}` : kind;
-}
-function catInfo(c) {
-  if (CATS[c]) return CATS[c];
-  const pkg = c.slice(4);
-  return (CATS[c] = { label: pkg, color: LIB_COLORS[libOrder.length % LIB_COLORS.length], lib: true, order: libOrder.push(c) });
-}
-const libOrder = [];
-// Give the libraries that allocate the most the most distinct colors.
-(function assignLibColors() {
-  const size = new Map();
-  for (const flat of Object.values(D.views)) {
-    if (!flat) continue;
-    for (let i = 0; i < flat.length; i += 4) {
-      let n = flat[i];
-      while (n !== 0) {
-        const c = catOf(D.nodes[2 * n + 1]);
-        if (c.startsWith("lib:")) size.set(c, (size.get(c) || 0) + flat[i + 1] + flat[i + 2]);
-        n = D.nodes[2 * n];
-      }
-    }
-  }
-  [...size.entries()].sort((a, b) => b[1] - a[1]).forEach(([c]) => catInfo(c));
+// One box per function, not per line: frames that differ only by line
+// share the first such frame's id, and nodes remember which lines they cover.
+const funcOf = (() => {
+  const first = new Map();
+  return D.frames.map(([func, fi], id) => {
+    const k = `${fi}\u0000${func}`;
+    if (!first.has(k)) first.set(k, id);
+    return first.get(k);
+  });
 })();
-function pkgOf(id) { return id < 0 ? "" : D.files[D.frames[id][1]][2]; }
-function catDescription(id) {
-  const c = catOf(id), pkg = pkgOf(id);
-  if (c === "mine") return "your code";
-  if (c.startsWith("lib:")) return `library: ${pkg}`;
-  if (c === "std") return pkg ? `Python standard library (${pkg})` : "Python standard library";
-  return catInfo(c).label;
+function locOf(node) {
+  if (node.id < 0 || !node.lines) return "";
+  const file = fileOf(node.id)[0];
+  const lines = [...node.lines].sort((a, b) => a - b);
+  return file ? `${file}:${lines.slice(0, 4).join(", ")}${lines.length > 4 ? "…" : ""}` : "";
 }
-function boxLabel(id, func) {
-  const c = catOf(id), pkg = pkgOf(id);
-  return (c.startsWith("lib:") || c === "std") && pkg && !func.startsWith(pkg) ? `${pkg} · ${func}` : func;
-}
-let highlight = null;
 
 // Frames of a trie node, outermost first.
 function pathOf(node) {
@@ -408,42 +449,42 @@ function pathOf(node) {
   return out.reverse();
 }
 
-// Keep your frames; of each run of library frames keep only its outermost
-// one (the call you made into the library); drop the launcher at the root.
-function collapse(path) {
+// Grouping: keep your frames; of each run of library frames keep only the
+// first (the call you made into the library); drop the launcher at the root.
+function group(path) {
   if (!path.length) return [NO_STACK];
   const mine = path.map(id => D.frames[id][3] === 1);
   if (!mine.some(Boolean)) {
-    const startup = path.some(id => /(^<frozen runpy>$|^runpy\.py$)/.test(D.files[D.frames[id][1]][0]));
+    const startup = path.some(id => /^(<frozen runpy>|runpy\.py)$/.test(fileOf(id)[0]));
     // The walk keeps the innermost max_depth frames, so a deep library call
     // (nested imports, say) can lose the frames of yours at its root.
-    const kind = startup ? STARTUP : path.length >= D.max_depth ? DEEP : OUTSIDE;
-    return [kind, path[path.length - 1]];
+    return [startup ? STARTUP : path.length >= D.max_depth ? DEEP : OUTSIDE, path[path.length - 1]];
   }
   const out = [];
-  let i = mine.indexOf(true);
-  for (; i < path.length; i++) {
-    if (mine[i] || !(i > 0 && !mine[i - 1])) out.push(path[i]);
+  for (let i = mine.indexOf(true); i < path.length; i++) {
+    if (mine[i] || mine[i - 1]) out.push(path[i]);
   }
   return out;
 }
 
+// ---- the tree: node.total = sum of children + what was allocated in it ----
 function buildTree() {
   const flat = D.views[state.view] || [];
-  const unitBytes = VIEWS[state.view].unit === "bytes";
   const root = { id: null, total: 0, self: 0, native: 0, kids: new Map() };
   for (let i = 0; i < flat.length; i += 4) {
-    const bytes = flat[i + 1], count = flat[i + 2], native = flat[i + 3];
-    const v = unitBytes ? bytes : count;
+    const v = bytesView() ? flat[i + 1] : flat[i + 2];
     if (!v) continue;
-    const path0 = pathOf(flat[i]);
-    const path = state.mine ? collapse(path0) : (path0.length ? path0 : [NO_STACK]);
+    const native = bytesView() ? flat[i + 3] : 0;
+    const raw = pathOf(flat[i]);
+    const path = state.group ? group(raw) : (raw.length ? raw : [NO_STACK]);
     let node = root;
     node.total += v; node.native += native;
-    for (const id of path) {
+    for (const raw of path) {
+      const id = raw < 0 ? raw : funcOf[raw];
       let k = node.kids.get(id);
-      if (!k) { k = { id, total: 0, self: 0, native: 0, kids: new Map(), parent: node }; node.kids.set(id, k); }
+      if (!k) { k = { id, total: 0, self: 0, native: 0, kids: new Map(), lines: raw < 0 ? null : new Set() }; node.kids.set(id, k); }
       k.total += v; k.native += native;
+      if (k.lines) k.lines.add(D.frames[raw][2]);
       node = k;
     }
     node.self += v;
@@ -451,8 +492,33 @@ function buildTree() {
   return root;
 }
 
-function fmt(v) { return VIEWS[state.view].unit === "bytes" ? fmtBytes(v) : `${fmtCount(v)}×`; }
-function sortedKids(n) { return [...n.kids.values()].sort((a, b) => b.total - a.total); }
+// What a box splits into: the functions it called, plus what it allocated
+// itself (Python objects, and C allocations made while it ran). These add
+// up to its total exactly.
+function parts(node) {
+  const out = [...node.kids.values()].map(k => ({ node: k, total: k.total }));
+  if (node.id === NO_STACK) return out;
+  let kidsNative = 0;
+  for (const k of node.kids.values()) kidsNative += k.native;
+  const selfNative = Math.max(0, Math.min(node.self, node.native - kidsNative));
+  const selfPy = node.self - selfNative;
+  if (out.length || selfNative) {
+    if (selfPy > 0) out.push({ here: "py", total: selfPy, owner: ownerOf(node.id) });
+    if (selfNative > 0) out.push({ here: "c", total: selfNative, owner: "native" });
+  }
+  return out.sort((a, b) => b.total - a.total);
+}
+const partKey = (parentKey, p) => `${parentKey}/${p.node ? p.node.id : p.here}`;
+function hereLabel(p, parent) {
+  const who = parent.id === null ? "" : ` in ${frameLabel(parent.id)}`;
+  return p.here === "c" ? `C code called${who}` : `allocated directly${who}`;
+}
+
+function nodeAt(root, ids) {
+  let n = root;
+  for (const id of ids) { const k = n.kids.get(id); if (!k) return null; n = k; }
+  return n;
+}
 
 // ---- header ----
 document.getElementById("title").textContent = `heapwise · ${D.title}`;
@@ -461,7 +527,7 @@ document.getElementById("findings").innerHTML =
   (D.findings.length ? D.findings : ["No allocations were recorded."]).map(l => `<p>${esc(l)}</p>`).join("") +
   D.notes.map(l => `<p class="note">${esc(l)}</p>`).join("");
 
-// ---- timeline ----
+// ---- timeline: total only, in ink, so color keeps meaning "owner" ----
 function drawTimeline() {
   const svg = document.getElementById("timeline");
   const W = svg.clientWidth || 800, H = 140, L = 64, B = 20, T = 8;
@@ -478,15 +544,16 @@ function drawTimeline() {
   }).join("");
   svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
   svg.innerHTML =
-    `<line x1="${L}" x2="${W - 8}" y1="${y(0)}" y2="${y(0)}" stroke="var(--line)"/>` +
-    `<line x1="${L}" x2="${W - 8}" y1="${y(max)}" y2="${y(max)}" stroke="var(--line)" stroke-dasharray="3 3"/>` +
-    `<text x="${L - 6}" y="${y(max) + 4}" text-anchor="end">${fmtBytes(max)}</text>` +
-    `<text x="${L - 6}" y="${y(0) + 4}" text-anchor="end">0</text>` +
-    `<path d="${area}" fill="var(--area)"/><path d="${d}" fill="none" stroke="var(--accent)" stroke-width="1.5"/>` +
-    (D.peak ? `<line x1="${px}" x2="${px}" y1="${T}" y2="${y(0)}" stroke="var(--accent)" stroke-dasharray="2 3"/>` : "") +
+    `<line x1="${L}" x2="${W - 8}" y1="${y(0)}" y2="${y(0)}" stroke="var(--axis)"/>` +
+    `<line x1="${L}" x2="${W - 8}" y1="${y(max)}" y2="${y(max)}" stroke="var(--grid)"/>` +
+    `<text x="${L - 8}" y="${y(max) + 4}" text-anchor="end">${fmtBytes(max)}</text>` +
+    `<text x="${L - 8}" y="${y(0) + 4}" text-anchor="end">0</text>` +
+    `<path d="${area}" fill="var(--ink)" fill-opacity="0.07"/><path d="${d}" fill="none" stroke="var(--ink-2)" stroke-width="2" stroke-linejoin="round"/>` +
+    (D.peak ? `<line x1="${px}" x2="${px}" y1="${T}" y2="${y(0)}" stroke="var(--ink)" stroke-dasharray="2 3"/>` +
+      `<circle cx="${px}" cy="${y(D.peak)}" r="4" fill="var(--ink)" stroke="var(--surface)" stroke-width="2"/>` : "") +
     ticks;
   document.getElementById("tl-hint").textContent = D.peak
-    ? `peak ${fmtBytes(D.peak)} at ${D.peak_time.toFixed(2)} s, dashed line`
+    ? `Live memory as the program ran. The peak, ${fmtBytes(D.peak)} at ${D.peak_time.toFixed(2)} s, is marked with a dot.`
     : "";
 }
 
@@ -500,43 +567,83 @@ function drawTabs() {
     b.setAttribute("role", "tab");
     b.setAttribute("aria-selected", String(k === state.view));
     if (D.views[k] === null) { b.disabled = true; b.title = "Run with --exact to count temporaries"; }
-    b.onclick = () => { state.view = k; state.zoom = []; render(); fadeIn(); };
+    b.onclick = () => { state.view = k; state.zoom = []; state.highlight = null; render(); fadeIn(); };
     tabs.appendChild(b);
   }
 }
 
-// ---- flame graph (icicle: callers on top) ----
+// ---- owners: who allocated the memory in this view ----
+function drawOwners(root) {
+  const by = Object.fromEntries(OWNER_ORDER.map(o => [o, 0]));
+  const libs = new Map();
+  // Walk the parts of every node, counting only what was allocated in it.
+  const walk = (n) => {
+    for (const p of parts(n)) {
+      if (p.node) {
+        if (!p.node.kids.size && !(p.node.native > 0) && p.node.id !== NO_STACK) addOwn(p.node.id, p.total);
+        else if (p.node.id === NO_STACK) by.native += p.total;
+        else walk(p.node);
+      } else if (p.here === "c") by.native += p.total;
+      else addOwn(n.id, p.total);
+    }
+  };
+  const addOwn = (id, v) => {
+    const o = ownerOf(id);
+    by[o] += v;
+    if (o === "lib") libs.set(frameInfo(id).pkg, (libs.get(frameInfo(id).pkg) || 0) + v);
+  };
+  walk(root);
+  const total = root.total || 1;
+  const present = OWNER_ORDER.filter(o => by[o] > 0);
+  if (state.highlight && !by[state.highlight]) state.highlight = null;
+  document.getElementById("split").innerHTML = present.map(o =>
+    `<span style="flex:${by[o]} 1 0;background:var(--${o});opacity:${!state.highlight || state.highlight === o ? 1 : 0.2}"></span>`).join("");
+  const libNames = [...libs.entries()].sort((a, b) => b[1] - a[1]).map(([n]) => n);
+  const owners = document.getElementById("owners");
+  owners.innerHTML = present.map(o => {
+    const what = o === "lib" ? libNames.slice(0, 3).join(", ") + (libNames.length > 3 ? "…" : "") : OWNERS[o].what;
+    return `<button class="chip" data-o="${o}" aria-pressed="${state.highlight === o}" title="Click to highlight in the cascade">` +
+      `<span class="sw" style="background:var(--${o})"></span>${OWNERS[o].label}` +
+      `<span class="v">${fmtPct(pctOf(by[o], total))} · ${fmt(by[o])}</span>` +
+      (what ? `<span class="what">${esc(what)}</span>` : "") + `</button>`;
+  }).join("");
+  owners.querySelectorAll(".chip").forEach(b => {
+    b.onclick = () => { state.highlight = state.highlight === b.dataset.o ? null : b.dataset.o; render(); };
+  });
+}
+
+// ---- tooltip ----
 const tip = document.getElementById("tip");
-function showTip(e, node, rootTotal) {
-  const f = frameInfo(node.id);
-  const pct = rootTotal ? (100 * node.total / rootTotal).toFixed(1) : "0";
-  const native = VIEWS[state.view].unit === "bytes" && node.native ? ` · ${fmtBytes(node.native)} native` : "";
-  tip.innerHTML = `<b>${esc(f.func)}</b> <span class="loc">${esc(f.loc)}</span><br>` +
-    `<span class="sw" style="background:${catInfo(catOf(node.id)).color}"></span>${esc(catDescription(node.id))}<br>` +
-    `${fmt(node.total)} (${pct}%)${native}` + (node.self ? ` · ${fmt(node.self)} allocated here` : "");
+function showTip(e, html) {
+  tip.innerHTML = html;
   tip.style.display = "block";
   const r = tip.getBoundingClientRect();
-  tip.style.left = Math.min(e.clientX + 12, innerWidth - r.width - 8) + "px";
-  tip.style.top = (e.clientY + 14 + r.height > innerHeight ? e.clientY - r.height - 10 : e.clientY + 14) + "px";
+  tip.style.left = Math.min(e.clientX + 14, innerWidth - r.width - 8) + "px";
+  tip.style.top = (e.clientY + 16 + r.height > innerHeight ? e.clientY - r.height - 12 : e.clientY + 16) + "px";
 }
-document.addEventListener("scroll", () => { tip.style.display = "none"; }, true);
-
-function nodeAt(root, ids) {
-  let n = root;
-  for (const id of ids) { const k = n.kids.get(id); if (!k) return null; n = k; }
-  return n;
+const hideTip = () => { tip.style.display = "none"; };
+document.addEventListener("scroll", hideTip, true);
+function tipFor(p, parent, rootTotal) {
+  const share = `${fmt(p.total)} · ${fmtPct(pctOf(p.total, rootTotal))} of all` +
+    (parent && parent.total ? ` · ${fmtPct(pctOf(p.total, parent.total))} of its caller` : "");
+  if (p.more) return `<b>${fmtCount(p.more)} smaller items</b>, each too narrow to draw<br>${share}<br><span class="loc">All listed in the call tree below</span>`;
+  if (p.here) {
+    const what = p.here === "c" ? "Allocated by C code (an extension's malloc/mmap) while this function was running."
+      : "Python objects created directly in this function, not in anything it called.";
+    return `<b>${esc(hereLabel(p, parent))}</b><br><span class="sw" style="background:var(--${p.owner})"></span>${what}<br>${share}`;
+  }
+  return `<b>${esc(frameLabel(p.node.id))}</b> <span class="loc">${esc(locOf(p.node))}</span><br>` +
+    `<span class="sw" style="background:var(--${ownerOf(p.node.id)})"></span>${esc(ownerText(p.node.id))}<br>${share}`;
 }
 
-// Set by zoom clicks: boxes then glide from where they were to where they go.
+// ---- cascade ----
 let animateZoom = false;
 function drawFlame(root) {
   const el = document.getElementById("flame");
   const crumbs = document.getElementById("crumbs");
   const before = new Map();
   if (animateZoom && !reduceMotion()) {
-    for (const b of el.querySelectorAll(".fn[data-k]")) {
-      before.set(b.dataset.k, [b.style.left, b.style.width, b.style.top]);
-    }
+    for (const b of el.querySelectorAll(".box[data-k]")) before.set(b.dataset.k, [b.style.left, b.style.width, b.style.top]);
   }
   animateZoom = false;
   el.innerHTML = "";
@@ -547,176 +654,140 @@ function drawFlame(root) {
   }
   let focus = nodeAt(root, state.zoom);
   if (!focus) { state.zoom = []; focus = root; }
+  const zoomTo = z => { state.zoom = z; animateZoom = true; hideTip(); render(); };
   crumbs.innerHTML = state.zoom.length
-    ? `<a data-z="0">all</a>` + state.zoom.map((id, i) => ` › <a data-z="${i + 1}">${esc(frameInfo(id).func)}</a>`).join("")
-    : "Click a box to zoom in.";
-  crumbs.querySelectorAll("a").forEach(a => {
-    a.onclick = () => { state.zoom = state.zoom.slice(0, +a.dataset.z); animateZoom = true; render(); };
-  });
+    ? `<a data-z="0">${esc(VIEWS[state.view].root)}</a>` +
+      state.zoom.map((id, i) => ` › ${i + 1 < state.zoom.length ? `<a data-z="${i + 1}">` : "<b>"}${esc(frameLabel(id))}${i + 1 < state.zoom.length ? "</a>" : "</b>"}`).join("")
+    : "Click a box to zoom into it.";
+  crumbs.querySelectorAll("a").forEach(a => { a.onclick = () => zoomTo(state.zoom.slice(0, +a.dataset.z)); });
 
-  const W = el.clientWidth || 800, RH = 20;
+  const W = el.clientWidth || 800, RH = 26, GAP = 2;
   let depth = 0;
   const frag = document.createDocumentFragment();
-  const place = (node, x, w, d, path, dim) => {
-    if (w < 0.5) return;
+  const box = (cls, x, w, d, key, label, value, tipHtml) => {
     depth = Math.max(depth, d + 1);
-    const f = frameInfo(node.id);
     const div = document.createElement("div");
-    div.className = "fn" + (dim ? " dim" : "");
-    div.dataset.k = key(path);
-    div.style.left = x + "px"; div.style.top = d * RH + "px"; div.style.width = Math.max(w, 1) + "px";
-    const cat = catOf(node.id);
-    div.style.background = catInfo(cat).color;
-    if (d % 2) div.style.filter = "brightness(0.93)";  // tell neighbouring rows apart
-    if (highlight && cat !== highlight && !dim) div.classList.add("hl-off");
-    if (w > 30) div.textContent = boxLabel(node.id, f.func);
-    // Purple underline: the part of this box's memory that native (C) code allocated.
-    if (VIEWS[state.view].unit === "bytes" && node.native > 0 && node.total > 0) {
-      const nat = document.createElement("i");
-      nat.className = "nat";
-      nat.style.width = Math.min(100, 100 * node.native / node.total) + "%";
-      div.appendChild(nat);
-    }
-    div.onmousemove = e => showTip(e, node, root.total);
-    div.onmouseleave = () => { tip.style.display = "none"; };
-    div.onclick = () => { state.zoom = path; tip.style.display = "none"; animateZoom = true; render(); };
+    div.className = `box ${cls}`;
+    div.dataset.k = key;
+    div.style.left = x + "px";
+    div.style.top = d * RH + "px";
+    div.style.width = Math.max(1, w - GAP) + "px";
+    if (w > 24) div.innerHTML = `${esc(label)}${w > 90 ? `<span class="val">${esc(value)}</span>` : ""}`;
+    div.onmousemove = e => showTip(e, tipHtml());
+    div.onmouseleave = hideTip;
     frag.appendChild(div);
-    placeKids(node, x, w, d + 1, path);
+    return div;
   };
-  // Children too narrow to see are drawn as one "N more" box, so a node
-  // with thousands of small callees still shows where its memory went.
-  const placeKids = (node, x, w, d, path) => {
-    let cx = x, rest = 0, restN = 0;
-    for (const k of sortedKids(node)) {
-      const kw = w * k.total / node.total;
-      if (kw < 3) { rest += k.total; restN++; continue; }
-      place(k, cx, kw, d, [...path, k.id], false);
-      cx += kw;
-    }
-    if (restN && rest) {
-      const rw = w * rest / node.total;
-      if (rw < 0.5) return;
-      depth = Math.max(depth, d + 1);
-      const div = document.createElement("div");
-      div.className = "fn";
-      div.dataset.k = key(path) + "/more";
-      div.style.left = cx + "px"; div.style.top = d * RH + "px"; div.style.width = Math.max(rw, 1) + "px";
-      div.style.background = "var(--synthetic)"; div.style.cursor = "default";
-      const label = `${fmtCount(restN)} more`;
-      if (rw > 30) div.textContent = label;
-      div.onmousemove = e => {
-        tip.innerHTML = `<b>${label}</b>, each too small to draw<br>${fmt(rest)} (${(100 * rest / root.total).toFixed(1)}%) in total` +
-          `<br><span class="loc">listed in the call tree below</span>`;
-        tip.style.display = "block";
-        tip.style.left = Math.min(e.clientX + 12, innerWidth - 300) + "px"; tip.style.top = e.clientY + 14 + "px";
-      };
-      div.onmouseleave = () => { tip.style.display = "none"; };
-      frag.appendChild(div);
+  const off = owner => state.highlight && owner !== state.highlight ? " off" : "";
+  const place = (p, parent, x, w, d, key, path) => {
+    if (p.node) {
+      const o = ownerOf(p.node.id);
+      const b = box(o + off(o), x, w, d, key, frameLabel(p.node.id), fmt(p.total), () => tipFor(p, parent, root.total));
+      b.onclick = () => zoomTo(path);
+      placeParts(p.node, x, w, d + 1, key, path);
+    } else {
+      box(`${p.owner} here${off(p.owner)}`, x, w, d, key, hereLabel(p, parent), fmt(p.total), () => tipFor(p, parent, root.total));
     }
   };
-  // Ancestors of the zoomed node fill the width, dimmed.
-  let d = 0;
-  for (let i = 0; i < state.zoom.length; i++) {
-    const anc = nodeAt(root, state.zoom.slice(0, i));
-    if (i > 0) { place({ ...anc, kids: new Map() }, 0, W, d++, state.zoom.slice(0, i), true); }
-  }
-  if (focus === root) {
-    placeKids(root, 0, W, d, []);
-  } else {
-    place(focus, 0, W, d, state.zoom.slice(), false);
-  }
+  // Children fill their parent's width exactly; those too narrow to draw
+  // share one "N more" box at the end, so nothing goes missing.
+  const placeParts = (node, x, w, d, key, path) => {
+    let cx = x, restN = 0, rest = 0;
+    for (const p of parts(node)) {
+      const pw = w * p.total / node.total;
+      if (pw < 4) { restN++; rest += p.total; continue; }
+      place(p, node, cx, pw, d, partKey(key, p), p.node ? [...path, p.node.id] : path);
+      cx += pw;
+    }
+    if (restN) {
+      const more = { more: restN, total: rest };
+      box("other more", cx, x + w - cx, d, `${key}/more`, `${fmtCount(restN)} more`, fmt(rest), () => tipFor(more, node, root.total));
+    }
+  };
+  // Row 0: the whole view (or the zoomed function), full width.
+  const top = focus === root
+    ? box("root", 0, W, 0, "root", VIEWS[state.view].root, fmt(root.total),
+        () => `<b>${esc(VIEWS[state.view].root)}</b><br>${fmt(root.total)}`)
+    : null;
+  if (top) placeParts(root, 0, W, 1, "root", []);
+  else place({ node: focus, total: focus.total }, null, 0, W, 0, "root/" + state.zoom.join("/"), state.zoom.slice());
   el.appendChild(frag);
   el.style.height = depth * RH + "px";
+
   if (before.size) {
-    const boxes = [...el.querySelectorAll(".fn")];
+    const boxes = [...el.querySelectorAll(".box")];
     const target = boxes.map(b => [b.style.left, b.style.width, b.style.top]);
     boxes.forEach(b => {
       const old = before.get(b.dataset.k);
       if (old) [b.style.left, b.style.width, b.style.top] = old;
       else b.classList.add("fade");
     });
-    void el.offsetWidth; // commit the starting positions before transitioning
-    boxes.forEach((b, i) => {
-      b.classList.add("anim");
-      b.classList.remove("fade");
-      [b.style.left, b.style.width, b.style.top] = target[i];
-    });
+    void el.offsetWidth;  // commit the starting positions before transitioning
+    boxes.forEach((b, i) => { b.classList.add("anim"); b.classList.remove("fade"); [b.style.left, b.style.width, b.style.top] = target[i]; });
   }
 }
 
-// ---- call tree ----
+// ---- call tree: same parts as the cascade, as rows ----
 let open = new Set();
-function key(path) { return path.join("/"); }
 function autoOpen(root) {
-  open = new Set();
-  const walk = (n, path, d) => {
-    const kids = sortedKids(n);
-    kids.forEach((k, i) => {
-      const p = [...path, k.id];
-      if (d < 1 || (i === 0 && k.total >= root.total * 0.2)) { open.add(key(p)); walk(k, p, d + 1); }
+  open = new Set(["root"]);
+  const walk = (n, key, d) => {
+    parts(n).forEach((p, i) => {
+      if (!p.node) return;
+      const k = partKey(key, p);
+      if (d < 1 || (i === 0 && p.total >= root.total * 0.2)) { open.add(k); walk(p.node, k, d + 1); }
     });
   };
-  walk(root, [], 0);
+  walk(root, "root", 0);
 }
-// `enter`: key of a row just expanded; its new descendants animate in.
 function drawTree(root, enter) {
   const t = document.getElementById("tree");
-  const bytes = VIEWS[state.view].unit === "bytes";
-  let html = `<tr><th>Total</th><th>%</th><th>Here</th>${bytes ? "<th>Native</th>" : ""}<th>Function</th></tr>`;
+  let html = `<tr><th>Total</th><th>Share</th><th>Function</th></tr>`;
   if (!root.total) { t.innerHTML = html; return; }
   const rows = [];
-  const walk = (n, path, d) => {
+  const walk = (n, key, d) => {
     let shown = 0, rest = 0, restN = 0;
-    for (const k of sortedKids(n)) {
-      const p = [...path, k.id];
-      if (shown >= 200 || (k.total / root.total < 0.001 && shown >= 10)) { rest += k.total; restN++; continue; }
+    for (const p of parts(n)) {
+      if (shown >= 200 || (p.total / root.total < 0.001 && shown >= 10)) { rest += p.total; restN++; continue; }
       shown++;
-      rows.push([k, p, d]);
-      if (open.has(key(p))) walk(k, p, d + 1);
+      const k = partKey(key, p);
+      rows.push({ p, parent: n, k, d });
+      if (p.node && open.has(k)) walk(p.node, k, d + 1);
     }
-    if (restN) rows.push([{ more: restN, total: rest }, path, d]);
+    if (restN) rows.push({ p: { more: restN, total: rest }, parent: n, k: `${key}/more`, d });
   };
-  walk(root, [], 0);
-  const cell = (inner, attrs = "") => `<td${attrs}><div class="c">${inner}</div></td>`;
-  // Rows under the just-expanded one slide in, slightly staggered.
+  rows.push({ p: { node: root, total: root.total, isRoot: true }, parent: null, k: "root", d: 0 });
+  if (open.has("root")) walk(root, "root", 1);
   let entering = 0;
-  const enterAttrs = (p, cls) => {
-    if (enter === undefined || !key(p).startsWith(enter + "/")) return cls ? ` class="${cls}"` : "";
-    return ` class="${cls ? cls + " " : ""}enter" style="--delay:${Math.min(entering++, 12) * 12}ms"`;
-  };
-  for (const [k, p, d] of rows) {
-    if (k.more) {
-      html += `<tr${enterAttrs([...p, "more"], "")} data-parent="${esc(key(p))}">${cell(fmt(k.total))}${cell(`${(100 * k.total / root.total).toFixed(1)}%`)}${cell("")}${bytes ? cell("") : ""}` +
-        cell(`${fmtCount(k.more)} more, each smaller`, ` class="lib" style="padding-left:${22 + d * 16}px"`) + `</tr>`;
-      continue;
+  const cell = (inner, attrs = "") => `<td${attrs}><div class="c">${inner}</div></td>`;
+  for (const { p, parent, k, d } of rows) {
+    const isNew = enter !== undefined && k.startsWith(enter + "/");
+    const cls = [p.node ? "row" : p.here ? "here" : "", isNew ? "enter" : ""].filter(Boolean).join(" ");
+    const style = isNew ? ` style="--delay:${Math.min(entering++, 12) * 12}ms"` : "";
+    const pct = pctOf(p.total, root.total);
+    let name;
+    if (p.isRoot) name = `<span class="tw${open.has("root") ? " open" : ""}">▸</span><b>${esc(VIEWS[state.view].root)}</b>`;
+    else if (p.more) name = `<span class="tw"></span><span class="dim">${fmtCount(p.more)} more, each smaller</span>`;
+    else if (p.here) name = `<span class="tw"></span><span class="sw" style="background:var(--${p.owner})"></span><span class="dim">${esc(hereLabel(p, parent))}</span>`;
+    else {
+      const f = frameInfo(p.node.id), o = ownerOf(p.node.id);
+      const tw = parts(p.node).length ? `<span class="tw${open.has(k) ? " open" : ""}">▸</span>` : `<span class="tw"></span>`;
+      const pkg = (o === "lib" || o === "std") && f.pkg ? `<span class="pkg">${esc(f.pkg)}</span>` : "";
+      name = `${tw}<span class="sw" style="background:var(--${o})"></span>${pkg}<span class="mono">${esc(f.func)}</span><span class="loc2 mono">${esc(locOf(p.node))}</span>`;
     }
-    const f = frameInfo(k.id);
-    const pct = 100 * k.total / root.total;
-    const isOpen = open.has(key(p));
-    const tw = k.kids.size ? `<span class="tw${isOpen ? " open" : ""}">▸</span>` : `<span class="tw"></span>`;
-    html += `<tr${enterAttrs(p, "row")} data-k="${esc(key(p))}">${cell(fmt(k.total))}` +
-      cell(`<span class="bar" style="width:${Math.max(1, pct * 0.4)}px"></span>${pct.toFixed(1)}%`) +
-      cell(k.self ? fmt(k.self) : "") +
-      (bytes ? cell(k.native ? fmtBytes(k.native) : "") : "") +
-      cell(`${tw}${badge(k.id)}<span class="${f.mine ? "" : "lib"}">${esc(f.func)}</span><span class="loc2">${esc(f.loc)}</span>`,
-        ` class="mono" style="padding-left:${8 + d * 16}px"`) + `</tr>`;
+    html += `<tr class="${cls}"${style} data-k="${esc(k)}">` +
+      cell(fmt(p.total)) +
+      cell(`<span class="pct"><i style="width:${Math.max(1, pct * 0.6)}px"></i>${fmtPct(pct)}</span>`) +
+      cell(name, ` class="fname" style="padding-left:${8 + d * 18}px"`) + `</tr>`;
   }
   t.innerHTML = html;
   t.querySelectorAll("tr.row").forEach(r => {
     r.onclick = () => {
       const k = r.dataset.k;
-      if (!open.has(k)) {
-        open.add(k);
-        drawTree(root, k);
-        return;
-      }
+      if (!open.has(k)) { open.add(k); drawTree(root, k); return; }
       open.delete(k);
-      // Animate the subtree out, then redraw without it.
       r.querySelector(".tw")?.classList.remove("open");
-      const gone = [...t.querySelectorAll("tr")].filter(x => {
-        const xk = x.dataset.k ?? x.dataset.parent;  // "N more" rows carry their parent's key
-        return xk !== undefined && (xk === k && x.dataset.parent !== undefined || xk.startsWith(k + "/"));
-      });
+      const gone = [...t.querySelectorAll("tr[data-k]")].filter(x => x.dataset.k.startsWith(k + "/"));
       if (!gone.length || reduceMotion()) { drawTree(root); return; }
       gone.forEach(x => x.classList.add("leave"));
       setTimeout(() => drawTree(root), 150);
@@ -724,81 +795,30 @@ function drawTree(root, enter) {
   });
 }
 
-function badge(id) {
-  const c = catOf(id);
-  if (c === "mine") return "";
-  const text = c.startsWith("lib:") ? pkgOf(id) : c === "std" ? (pkgOf(id) ? `stdlib · ${pkgOf(id)}` : "stdlib") : "";
-  return text ? `<span class="pkg" style="background:${catInfo(c).color}">${esc(text)}</span>` : "";
-}
-
-// ---- breakdown: who allocated the memory in this view ----
-function drawBreakdown() {
-  const flat = D.views[state.view] || [];
-  const unitBytes = VIEWS[state.view].unit === "bytes";
-  const by = new Map();
-  let total = 0;
-  const add = (c, v) => { if (v > 0) { by.set(c, (by.get(c) || 0) + v); total += v; } };
-  for (let i = 0; i < flat.length; i += 4) {
-    let v = unitBytes ? flat[i + 1] : flat[i + 2];
-    if (!v) continue;
-    // malloc/mmap from C code: we know it was native, not which extension,
-    // so it gets its own share rather than the calling Python function's.
-    if (unitBytes) { add("native", flat[i + 3]); v -= flat[i + 3]; }
-    const path = pathOf(flat[i]);
-    let c;
-    if (!path.length) c = "native";
-    else {
-      c = catOf(path[path.length - 1]);
-      if (c === "std" || c === "tool") {
-        // Stdlib called from your code counts as the stdlib; with no frame
-        // of yours anywhere it is the interpreter starting your script.
-        const head = collapse(path)[0];
-        if (head === STARTUP) c = "startup";
-        else if (head === DEEP) c = "deep";
-      }
-    }
-    add(c, v);
+// ---- wiring ----
+function fadeIn() {
+  for (const id of ["flame", "tree"]) {
+    const el = document.getElementById(id);
+    el.classList.remove("fade-in"); void el.offsetWidth; el.classList.add("fade-in");
   }
-  const items = [...by.entries()].sort((a, b) => b[1] - a[1]);
-  if (highlight && !by.has(highlight)) highlight = null;
-  document.getElementById("bd-bar").innerHTML = items.map(([c, v]) =>
-    `<span title="${esc(catInfo(c).label)}" style="width:${100 * v / total}%;background:${catInfo(c).color};opacity:${!highlight || highlight === c ? 1 : 0.25}"></span>`).join("");
-  const legend = document.getElementById("bd-legend");
-  legend.innerHTML = items.map(([c, v]) => {
-    const pct = 100 * v / total;
-    return `<button class="chip" data-c="${esc(c)}" aria-pressed="${highlight === c}"><span class="sw" style="background:${catInfo(c).color}"></span>` +
-      `${esc(catInfo(c).label)} <b>${pct < 0.1 ? "<0.1" : pct.toFixed(1)}%</b></button>`;
-  }).join("");
-  legend.querySelectorAll(".chip").forEach(b => {
-    b.onclick = () => { highlight = highlight === b.dataset.c ? null : b.dataset.c; drawBreakdown(); drawFlame(buildTree()); };
-  });
 }
-
-const reduceMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
-
 let lastTreeKey = "";
 function render() {
   drawTabs();
   const v = VIEWS[state.view];
   const root = buildTree();
-  const whole = state.view === "peak" ? `${fmtBytes(D.peak)} at peak` : state.view === "leaks" ? `${fmtBytes(D.leaked)} at exit` : `${fmtCount(root.total)} allocations`;
-  document.getElementById("view-title").innerHTML = `${esc(v.title)} <span class="hint">${esc(whole)}${D.sampled && v.unit === "bytes" ? ", estimated from samples" : ""}</span>`;
-  drawBreakdown();
+  document.getElementById("view-title").textContent = v.title;
+  document.getElementById("view-hint").textContent =
+    `Read top to bottom: each box is a function, as wide as the memory it accounts for, and splits into what it called` +
+    ` and what it allocated itself. ${D.sampled && v.unit === "bytes" ? "Sizes are estimated from samples. " : ""}` +
+    `Colors show who allocated it.`;
+  drawOwners(root);
   drawFlame(root);
-  const tk = `${state.view}/${state.mine}`;
+  const tk = `${state.view}/${state.group}`;
   if (tk !== lastTreeKey) { autoOpen(root); lastTreeKey = tk; }
   drawTree(root);
 }
-
-function fadeIn() {
-  for (const id of ["flame", "tree"]) {
-    const el = document.getElementById(id);
-    el.classList.remove("fade-in");
-    void el.offsetWidth;
-    el.classList.add("fade-in");
-  }
-}
-document.getElementById("mine").onchange = e => { state.mine = e.target.checked; state.zoom = []; render(); fadeIn(); };
+document.getElementById("group").onchange = e => { state.group = e.target.checked; state.zoom = []; render(); fadeIn(); };
 let rt;
 addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(() => { drawTimeline(); render(); }, 100); });
 drawTimeline();
