@@ -330,6 +330,7 @@ label { color: var(--ink-2); font-size: 13px; cursor: pointer; user-select: none
   box-shadow: inset 0 2px 0 var(--c); }
 .box.here:hover { box-shadow: inset 0 0 0 2px var(--ink); }
 .box.more { cursor: default; }
+.box.thin { padding: 0; }
 .box.off { opacity: 0.2; }
 .box.anim { transition: left 260ms ease, width 260ms ease, top 260ms ease, opacity 200ms ease; }
 .box.fade { opacity: 0; }
@@ -882,10 +883,14 @@ function drawFlame(root) {
     const div = document.createElement("div");
     div.className = `box ${cls}`;
     div.dataset.k = key;
-    div.style.left = x + "px";
-    div.style.top = d * RH + "px";
+    // Positions are fractions of the width, so the cascade always fits its
+    // panel, even before a resize re-render (a scrollbar appearing, say).
+    const pct = v => `${(100 * v / W).toFixed(4)}%`;
     const bw = Math.max(1, w - GAP);
-    div.style.width = bw + "px";
+    div.style.left = pct(x);
+    div.style.top = d * RH + "px";
+    div.style.width = w > GAP + 1 ? `calc(${pct(w)} - ${GAP}px)` : pct(w);
+    if (bw < 16) div.classList.add("thin");  // no padding, or it would widen the box
     if (bw < 10) div.style.borderRadius = Math.max(1, bw / 3) + "px";
     if (w > 24) div.innerHTML = `${esc(label)}${w > 90 ? `<span class="val">${esc(value)}</span>` : ""}`;
     div.onmousemove = e => showTip(e, tipHtml());
@@ -1038,6 +1043,14 @@ function render() {
 document.getElementById("group").onchange = e => { state.group = e.target.checked; state.zoom = []; render(); fadeIn(); };
 let rt;
 addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(() => { drawTimeline(); render(); }, 100); });
+// The panel can change width without a window resize (a scrollbar showing
+// up as the page grows); redraw so labels match the new widths.
+let lastW = 0;
+new ResizeObserver(() => {
+  const w = document.getElementById("flame").clientWidth;
+  if (lastW && Math.abs(w - lastW) > 1) { clearTimeout(rt); rt = setTimeout(() => { drawTimeline(); render(); }, 100); }
+  lastW = w;
+}).observe(document.getElementById("flame"));
 drawTimeline();
 render();
 </script>
