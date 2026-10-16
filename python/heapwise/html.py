@@ -1,4 +1,4 @@
-"""Self-contained HTML report: findings, memory timeline, flame graph and call tree.
+"""Self-contained HTML report: key numbers, memory timeline, flame graph and call tree.
 
 The page has no external dependencies, so it opens offline and can be attached
 to a bug report as a single file.
@@ -81,16 +81,12 @@ def report_data(
     exclude: list[str] | None = None,
     cwd: str | None = None,
     notes: list[str] | None = None,
+    rss: int | None = None,
 ) -> dict:
     """Everything the page needs, as plain JSON-able data."""
     exclude = list(exclude or [])
     summary = capture.summary(title, exclude, cwd, 5).splitlines()
     header = summary[0] if summary else title
-    findings = []
-    for line in summary[2:]:
-        if not line.strip() or line.startswith("Memory over time"):
-            break
-        findings.append(line)
     # The capture keys frames by bytecode offset; the page shows lines, so
     # frames on the same line of the same function become one. File names
     # are listed once and referred to by index.
@@ -139,11 +135,21 @@ def report_data(
         view: None if rows is None else [x for node, b, c, n in rows for x in (new_id[node], b, c, n)]
         for view, rows in values.items()
     }
+    # The biggest site in each view, by innermost frame outside ``exclude``,
+    # for the key-number tiles at the top of the page.
+    top = {}
+    for view in _VIEWS:
+        rows = [] if values[view] is None else capture.top(view, exclude, 1)
+        if rows:
+            func, file, *rest = rows[0]
+            path, kind, pkg = classify(file, cwd)
+            top[view] = [func, path, *rest, kind, pkg]  # rest: line, bytes, count, native
+        else:
+            top[view] = None
     prefix = f"heapwise · {title} · "
     return {
         "title": title,
         "header": header.removeprefix(prefix),
-        "findings": findings,
         "notes": list(notes or []),
         "duration": capture.duration_seconds,
         "peak": capture.peak_bytes,
@@ -151,6 +157,10 @@ def report_data(
         "peak_time": capture.peak_seconds,
         "leaked": capture.leaked_bytes,
         "sampled": capture.sample_rate != 0,
+        "allocations": capture.allocation_count,
+        "allocated": capture.allocated_bytes,
+        "top": top,
+        "rss": rss,
         "max_depth": MAX_STACK_DEPTH,
         "timeline": capture.timeline(400),
         "files": files,
@@ -175,9 +185,10 @@ def write_html(
     exclude: list[str] | None = None,
     cwd: str | None = None,
     notes: list[str] | None = None,
+    rss: int | None = None,
 ) -> str:
     """Write the report for ``capture`` to ``path`` and return the path."""
-    page = render(report_data(capture, title, exclude, cwd, notes))
+    page = render(report_data(capture, title, exclude, cwd, notes, rss))
     with open(path, "w", encoding="utf-8") as f:
         f.write(page)
     return os.fspath(path)
@@ -236,14 +247,46 @@ main { max-width: 1200px; margin: 0 auto; padding: 24px 16px 64px; }
 h1 { font-size: 20px; margin: 0 0 2px; font-weight: 600; }
 .sub { color: var(--ink-2); font-size: 13px; }
 .panel { background: var(--surface); border: 1px solid var(--ring); border-radius: 10px; padding: 16px; margin-top: 16px; }
-.findings p { margin: 2px 0; }
-.findings .note { color: var(--ink-2); font-size: 13px; margin-top: 6px; }
+
+/* Key numbers: one hero tile (the peak), four supporting tiles. Each tile is
+   label / value / one line of context. */
+.bento { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-top: 16px; }
+.tile { background: var(--surface); border: 1px solid var(--ring); border-radius: 10px; padding: 14px 16px; min-width: 0;
+  display: flex; flex-direction: column; gap: 2px; text-align: left; color: inherit; font: inherit; }
+button.tile { cursor: pointer; transition: box-shadow 160ms ease, transform 160ms ease; }
+button.tile:hover { box-shadow: 0 0 0 1px var(--axis); }
+button.tile:active { transform: translateY(1px); }
+.tile .label { color: var(--ink-2); font-size: 13px; }
+.tile .value { font-size: 26px; font-weight: 600; line-height: 1.2; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+.tile .value.quiet { font-size: 20px; color: var(--ink-2); font-weight: 500; }
+.tile .ctx { color: var(--ink-2); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tile .ctx .sw { margin-right: 6px; vertical-align: -1px; }
+.tile .loc3 { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tile.hero { grid-column: span 2; grid-row: span 2; padding: 18px 20px; }
+.tile.hero .value { font-size: 52px; line-height: 1.1; margin: 4px 0 2px; letter-spacing: -0.02em; }
+.hero .split { margin: 14px 0 8px; }
+.hero ul { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px 16px; font-size: 13px; }
+.hero li { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.hero li .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hero li .v { margin-left: auto; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.hero .foot { margin-top: auto; padding-top: 10px; color: var(--muted); font-size: 12px; }
+@media (max-width: 760px) {
+  .bento { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .tile.hero { grid-row: auto; }
+  .tile.hero .value { font-size: 44px; }
+  .tile .value { font-size: 22px; }
+  .tile .ctx { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .tile .loc3 { display: none; }
+}
+@media (max-width: 420px) { .hero ul { grid-template-columns: 1fr; } }
 h2 { font-size: 15px; font-weight: 600; margin: 0 0 4px; }
 .hint { color: var(--ink-2); font-size: 13px; margin: 0 0 12px; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
 
-#timeline { width: 100%; height: 140px; display: block; }
+#timeline { width: 100%; height: 190px; display: block; touch-action: pan-y; cursor: crosshair; }
 #timeline text { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+#timeline .peak-label { fill: var(--ink-2); font-weight: 600; }
+#timeline .hover { pointer-events: none; }
 
 .controls { display: flex; flex-wrap: wrap; gap: 10px 20px; align-items: center; margin-bottom: 14px; }
 .tabs { display: inline-flex; background: var(--page); border: 1px solid var(--ring); border-radius: 8px; padding: 2px; }
@@ -274,14 +317,18 @@ label { color: var(--ink-2); font-size: 13px; cursor: pointer; user-select: none
   font: 12px/24px system-ui, -apple-system, "Segoe UI", sans-serif; border-radius: 4px; cursor: pointer; }
 .box .val { opacity: 0.8; margin-left: 6px; font-variant-numeric: tabular-nums; }
 .box:hover { box-shadow: inset 0 0 0 2px var(--ink); }
-.box.mine { background: var(--mine); color: var(--mine-ink); }
-.box.lib { background: var(--lib); color: var(--lib-ink); }
-.box.native { background: var(--native); color: var(--native-ink); }
-.box.std { background: var(--std); color: var(--std-ink); }
-.box.other { background: var(--other); color: var(--other-ink); }
+.box.mine { --c: var(--mine); background: var(--mine); color: var(--mine-ink); }
+.box.lib { --c: var(--lib); background: var(--lib); color: var(--lib-ink); }
+.box.native { --c: var(--native); background: var(--native); color: var(--native-ink); }
+.box.std { --c: var(--std); background: var(--std); color: var(--std-ink); }
+.box.other { --c: var(--other); background: var(--other); color: var(--other-ink); }
 .box.root { background: var(--root); color: var(--root-ink); font-weight: 600; }
-/* Memory allocated directly in a function (not in something it called). */
-.box.here { background-image: repeating-linear-gradient(135deg, rgba(255,255,255,0.28) 0 2px, transparent 2px 7px); cursor: default; }
+/* Memory allocated directly in a function (not in something it called):
+   a lighter tint of the owner's color, so it reads as "the rest of the
+   box above" rather than as another function. */
+.box.here { background: color-mix(in srgb, var(--c) 42%, var(--surface)); color: var(--ink); cursor: default;
+  box-shadow: inset 0 2px 0 var(--c); }
+.box.here:hover { box-shadow: inset 0 0 0 2px var(--ink); }
 .box.more { cursor: default; }
 .box.off { opacity: 0.2; }
 .box.anim { transition: left 260ms ease, width 260ms ease, top 260ms ease, opacity 200ms ease; }
@@ -327,7 +374,7 @@ tr.leave td > .c { animation: row-out 150ms ease-in both; }
 <main>
   <h1 id="title"></h1>
   <div class="sub" id="header"></div>
-  <div class="panel findings" id="findings"></div>
+  <div class="bento" id="bento"></div>
 
   <div class="panel" id="p-time">
     <h2>Memory over time</h2>
@@ -468,15 +515,16 @@ function group(path) {
 }
 
 // ---- the tree: node.total = sum of children + what was allocated in it ----
-function buildTree() {
-  const flat = D.views[state.view] || [];
+function buildTree(view = state.view, grouped = state.group) {
+  const flat = D.views[view] || [];
+  const bytes = VIEWS[view].unit === "bytes";
   const root = { id: null, total: 0, self: 0, native: 0, kids: new Map() };
   for (let i = 0; i < flat.length; i += 4) {
-    const v = bytesView() ? flat[i + 1] : flat[i + 2];
+    const v = bytes ? flat[i + 1] : flat[i + 2];
     if (!v) continue;
-    const native = bytesView() ? flat[i + 3] : 0;
+    const native = bytes ? flat[i + 3] : 0;
     const raw = pathOf(flat[i]);
-    const path = state.group ? group(raw) : (raw.length ? raw : [NO_STACK]);
+    const path = grouped ? group(raw) : (raw.length ? raw : [NO_STACK]);
     let node = root;
     node.total += v; node.native += native;
     for (const raw of path) {
@@ -523,38 +571,195 @@ function nodeAt(root, ids) {
 // ---- header ----
 document.getElementById("title").textContent = `heapwise · ${D.title}`;
 document.getElementById("header").textContent = D.header;
-document.getElementById("findings").innerHTML =
-  (D.findings.length ? D.findings : ["No allocations were recorded."]).map(l => `<p>${esc(l)}</p>`).join("") +
-  D.notes.map(l => `<p class="note">${esc(l)}</p>`).join("");
+
+// ---- key numbers ----
+const fmtSecs = t => t >= 100 ? `${t.toFixed(0)} s` : t >= 10 ? `${t.toFixed(1)} s` : `${t.toFixed(2)} s`;
+// A row of capture.top(): [func, path, line, bytes, count, native, kind, pkg].
+function siteName(row) {
+  const [func, file, , , , , kind, pkg] = row;
+  if (func === "<script startup>") return SYNTH[STARTUP];
+  if (func === "<no Python stack>") return SYNTH[NO_STACK];
+  const base = file.split(/[\\/]/).pop().replace(/\.py$/, "");
+  const name = func === "<module>" && base ? `${base} (top level)` : func;
+  return (kind === "lib" || kind === "std") && pkg && !name.startsWith(pkg) && func !== "<module>" ? `${pkg}.${name}` : name;
+}
+function siteOwner(row) {
+  if (row[0] === "<no Python stack>") return "native";
+  return row[6] === "mine" || row[6] === "lib" || row[6] === "std" ? row[6] : "other";
+}
+const siteLoc = row => row[1] ? `${row[1]}:${row[2]}` : "";
+function showView(view) {
+  if (D.views[view] === null) return;
+  if (state.view !== view) { state.view = view; state.zoom = []; state.highlight = null; render(); fadeIn(); }
+  document.getElementById("p-cascade").scrollIntoView({ behavior: reduceMotion() ? "auto" : "smooth", block: "start" });
+}
+function drawBento() {
+  const tile = (o) => `<${o.view ? `button type="button" data-view="${o.view}"` : "div"} class="tile${o.cls ? " " + o.cls : ""}"` +
+    `${o.view ? ` title="Show in the cascade"` : ""}>` +
+    `<span class="label">${esc(o.label)}</span><span class="value${o.quiet ? " quiet" : ""}">${esc(o.value)}</span>` +
+    (o.ctx ? `<span class="ctx">${o.ctx}</span>` : "") + (o.loc ? `<span class="loc3 mono">${esc(o.loc)}</span>` : "") +
+    (o.extra || "") + `</${o.view ? "button" : "div"}>`;
+  const sw = o => `<span class="sw" style="background:var(--${o})"></span>`;
+
+  // Hero: the peak, and who held it.
+  const { by, libs } = ownerTotals(buildTree("peak", true));
+  const present = OWNER_ORDER.filter(o => by[o] > 0);
+  const whole = present.reduce((a, o) => a + by[o], 0) || 1;
+  const libNames = [...libs.entries()].sort((a, b) => b[1] - a[1]).map(([n]) => n);
+  const ownerName = o => o === "lib" && libNames.length === 1 ? `Library: ${libNames[0]}` : o === "std" ? "Standard library" : OWNERS[o].label;
+  const foot = [
+    D.rss ? `The whole process peaked at ${fmtBytes(D.rss)} RSS, which also counts the interpreter itself.` : "",
+    ...D.notes,
+  ].filter(Boolean).map(esc).join("<br>");
+  const heroExtra = D.peak
+    ? `<div class="split" aria-hidden="true">${present.map(o => `<span style="flex:${by[o]} 1 0;background:var(--${o})"></span>`).join("")}</div>` +
+      `<ul>${present.map(o => `<li>${sw(o)}<span class="n">${esc(ownerName(o))}</span><span class="v">${fmtPct(pctOf(by[o], whole))}</span></li>`).join("")}</ul>` +
+      (foot ? `<div class="foot">${foot}</div>` : "")
+    : (foot ? `<div class="foot">${foot}</div>` : "");
+  const tiles = [{
+    cls: "hero", view: D.peak ? "peak" : null, label: "Peak memory", value: fmtBytes(D.peak),
+    ctx: D.peak ? `at ${fmtSecs(D.peak_time)} of a ${fmtSecs(D.duration)} run${D.sampled ? ", estimated from samples" : ""}` : "No allocations were recorded.",
+    extra: heroExtra,
+  }];
+
+  const big = D.top.peak;
+  tiles.push(big ? {
+    view: "peak", label: "Biggest at the peak", value: fmtBytes(big[3]),
+    ctx: `${sw(siteOwner(big))}${esc(siteName(big))} · ${fmtPct(pctOf(big[3], D.peak))} of the peak`, loc: siteLoc(big),
+  } : { label: "Biggest at the peak", value: "None", quiet: true });
+
+  const leak = D.top.leaks;
+  tiles.push(D.leaked && leak ? {
+    view: "leaks", label: "Still allocated at exit", value: fmtBytes(D.leaked),
+    ctx: `mostly ${sw(siteOwner(leak))}${esc(siteName(leak))}`, loc: siteLoc(leak),
+  } : { label: "Still allocated at exit", value: "Nothing", quiet: true, ctx: "Everything allocated was freed." });
+
+  if (D.views.temporaries === null) {
+    tiles.push({ label: "Temporary allocations", value: "Not counted", quiet: true, ctx: "Run with <span class=\"mono\">--exact</span> to count them." });
+  } else {
+    let n = 0;
+    const flat = D.views.temporaries;
+    for (let i = 2; i < flat.length; i += 4) n += flat[i];
+    const t = D.top.temporaries;
+    tiles.push(t && n ? {
+      view: "temporaries", label: "Temporary allocations", value: fmtCount(n),
+      ctx: `most from ${sw(siteOwner(t))}${esc(siteName(t))}`, loc: siteLoc(t),
+    } : { label: "Temporary allocations", value: "0", quiet: true, ctx: "No short-lived allocations." });
+  }
+
+  tiles.push({
+    label: "Allocated in total", value: fmtBytes(D.allocated),
+    ctx: `${fmtCount(D.allocations)} allocations${D.sampled ? " (sampled)" : ""}`,
+    loc: D.peak ? `${(D.allocated / D.peak).toFixed(1)}× the peak, freed and reused as it ran` : "",
+  });
+
+  const el = document.getElementById("bento");
+  el.innerHTML = tiles.map(tile).join("");
+  el.querySelectorAll("button[data-view]").forEach(b => { b.onclick = () => showView(b.dataset.view); });
+}
+drawBento();
 
 // ---- timeline: total only, in ink, so color keeps meaning "owner" ----
+// Round steps: 1, 2, 2.5 or 5 times a power of ten (bytes use powers of 1024
+// for the unit, so the labels read 0, 5 MiB, 10 MiB...).
+function niceStep(raw) {
+  const p = 10 ** Math.floor(Math.log10(raw)), f = raw / p;
+  return p * (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10);
+}
+function byteTicks(max, want) {
+  let unit = 1;
+  while (max / unit >= 1024 && unit < 1024 ** 4) unit *= 1024;
+  let step = niceStep(max / unit / want) * unit;
+  if (unit > 1 && step < unit / 8) step = niceStep(max / want);  // tiny values: plain bytes
+  if (unit === 1) step = Math.max(1, Math.round(step));
+  const top = Math.max(step, Math.ceil(max / step - 1e-9) * step);
+  const ticks = [];
+  for (let v = 0; v <= top + step / 2; v += step) ticks.push(v);
+  return { top, ticks };
+}
+function fmtTick(n) {
+  if (!n) return "0";
+  const u = ["B", "KiB", "MiB", "GiB", "TiB"]; let i = 0; let v = n;
+  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+  return `${+v.toFixed(2)} ${u[i]}`;
+}
+function timeTicks(dur, want) {
+  if (!(dur > 0)) return { step: 1, ticks: [0] };
+  const step = niceStep(dur / want), ticks = [];
+  for (let t = 0; t <= dur + step * 1e-6; t += step) ticks.push(+t.toFixed(9));
+  return { step, ticks };
+}
+function fmtTime(t, step) {
+  if (D.duration < 1) {
+    const ms = t * 1000;
+    let dp = 0;
+    while (dp < 3 && Math.abs(step * 1000 * 10 ** dp - Math.round(step * 1000 * 10 ** dp)) > 1e-6) dp++;
+    return `${+ms.toFixed(dp)} ms`;
+  }
+  let dp = 0;  // enough decimals to show the step exactly (0.25 s needs two)
+  while (dp < 6 && Math.abs(step * 10 ** dp - Math.round(step * 10 ** dp)) > 1e-6) dp++;
+  return `${+t.toFixed(dp)} s`;
+}
 function drawTimeline() {
   const svg = document.getElementById("timeline");
-  const W = svg.clientWidth || 800, H = 140, L = 64, B = 20, T = 8;
-  const vals = D.timeline, max = Math.max(1, ...vals);
-  const x = i => L + (W - L - 8) * (i / Math.max(1, vals.length - 1));
-  const y = v => T + (H - T - B) * (1 - v / max);
-  let d = `M${x(0)},${y(0)}`;
-  vals.forEach((v, i) => { d += `L${x(i)},${y(v)}`; });
-  const area = d + `L${x(vals.length - 1)},${y(0)}L${x(0)},${y(0)}Z`;
-  const px = L + (W - L - 8) * (D.duration ? D.peak_time / D.duration : 0);
-  const ticks = [0, 0.25, 0.5, 0.75, 1].map(f => {
-    const t = D.duration * f, xx = L + (W - L - 8) * f;
-    return `<text x="${xx}" y="${H - 4}" text-anchor="${f === 0 ? "start" : f === 1 ? "end" : "middle"}">${t.toFixed(t < 10 ? 2 : 1)} s</text>`;
+  const W = svg.clientWidth || 800, H = 190, L = 64, R = 12, B = 24, T = 18;
+  const vals = D.timeline, n = vals.length, dur = D.duration || 0;
+  const pw = W - L - R;
+  const { top, ticks: yt } = byteTicks(Math.max(1, ...vals, D.peak), H < 160 ? 3 : 4);
+  const { step, ticks: xt } = timeTicks(dur, Math.max(3, Math.min(10, Math.floor(pw / 80))));
+  const xT = t => L + pw * (dur ? Math.min(1, t / dur) : 0);
+  const y = v => T + (H - T - B) * (1 - v / top);
+  // Value i is the highest live total in the i-th slice of the run; draw it
+  // at the slice's middle, and stretch the ends to the edges.
+  const mid = i => dur * (i + 0.5) / n;
+  let d = `M${L},${y(vals[0] || 0)}`;
+  vals.forEach((v, i) => { d += `L${xT(mid(i)).toFixed(1)},${y(v).toFixed(1)}`; });
+  d += `L${L + pw},${y(vals[n - 1] || 0)}`;
+  const area = d + `L${L + pw},${y(0)}L${L},${y(0)}Z`;
+  const grid = yt.map(v => `<line x1="${L}" x2="${L + pw}" y1="${y(v)}" y2="${y(v)}" stroke="${v ? "var(--grid)" : "var(--axis)"}"/>` +
+    `<text x="${L - 8}" y="${y(v) + 4}" text-anchor="end">${fmtTick(v)}</text>`).join("");
+  const xticks = xt.map((t, i) => {
+    const xx = xT(t);
+    const anchor = i === 0 ? "start" : xx > L + pw - 24 ? "end" : "middle";
+    return `<line x1="${xx}" x2="${xx}" y1="${y(0)}" y2="${y(0) + 4}" stroke="var(--axis)"/>` +
+      `<text x="${xx}" y="${H - 6}" text-anchor="${anchor}">${fmtTime(t, step)}</text>`;
   }).join("");
+  const px = xT(D.peak_time), py = y(D.peak);
+  const peakLabel = `Peak ${fmtBytes(D.peak)}`;
+  const labelRight = px < L + pw - 110;
   svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
-  svg.innerHTML =
-    `<line x1="${L}" x2="${W - 8}" y1="${y(0)}" y2="${y(0)}" stroke="var(--axis)"/>` +
-    `<line x1="${L}" x2="${W - 8}" y1="${y(max)}" y2="${y(max)}" stroke="var(--grid)"/>` +
-    `<text x="${L - 8}" y="${y(max) + 4}" text-anchor="end">${fmtBytes(max)}</text>` +
-    `<text x="${L - 8}" y="${y(0) + 4}" text-anchor="end">0</text>` +
+  svg.innerHTML = grid + xticks +
     `<path d="${area}" fill="var(--ink)" fill-opacity="0.07"/><path d="${d}" fill="none" stroke="var(--ink-2)" stroke-width="2" stroke-linejoin="round"/>` +
-    (D.peak ? `<line x1="${px}" x2="${px}" y1="${T}" y2="${y(0)}" stroke="var(--ink)" stroke-dasharray="2 3"/>` +
-      `<circle cx="${px}" cy="${y(D.peak)}" r="4" fill="var(--ink)" stroke="var(--surface)" stroke-width="2"/>` : "") +
-    ticks;
+    (D.peak ? `<line x1="${px}" x2="${px}" y1="${py}" y2="${y(0)}" stroke="var(--ink)" stroke-dasharray="2 3"/>` +
+      `<circle cx="${px}" cy="${py}" r="4" fill="var(--ink)" stroke="var(--surface)" stroke-width="2"/>` +
+      `<text class="peak-label" x="${px + (labelRight ? 8 : -8)}" y="${Math.max(12, py - 6)}" text-anchor="${labelRight ? "start" : "end"}">${esc(peakLabel)}</text>` : "") +
+    `<g class="hover" style="display:none"><line y1="${T - 6}" y2="${y(0)}" stroke="var(--ink)" stroke-opacity="0.45"/>` +
+    `<circle r="4" fill="var(--surface)" stroke="var(--ink)" stroke-width="2"/></g>`;
   document.getElementById("tl-hint").textContent = D.peak
-    ? `Live memory as the program ran. The peak, ${fmtBytes(D.peak)} at ${D.peak_time.toFixed(2)} s, is marked with a dot.`
+    ? "Live memory as the program ran. Hover the chart for the value at any moment."
     : "";
+
+  // Hover: snap to the nearest slice and show its value.
+  const hover = svg.querySelector(".hover"), hl = hover.querySelector("line"), hc = hover.querySelector("circle");
+  const off = () => { hover.style.display = "none"; hideTip(); };
+  svg.onpointermove = e => {
+    if (!n || !dur) return;
+    const r = svg.getBoundingClientRect();
+    const sx = (e.clientX - r.left) * W / r.width;
+    if (sx < L - 4 || sx > L + pw + 4) { off(); return; }
+    const i = Math.max(0, Math.min(n - 1, Math.floor((sx - L) / pw * n)));
+    const v = vals[i], cx = xT(mid(i));
+    hover.style.display = "";
+    hl.setAttribute("x1", cx); hl.setAttribute("x2", cx);
+    hc.setAttribute("cx", cx); hc.setAttribute("cy", y(v));
+    const t0 = dur * i / n, t1 = dur * (i + 1) / n;
+    const hasPeak = D.peak && D.peak_time >= t0 && D.peak_time <= t1;
+    const at = t => dur < 1 ? `${(t * 1000).toFixed(1)} ms` : fmtSecs(t);
+    showTip(e, `<b>${fmtBytes(v)}</b> live<br><span class="loc">at ${at((t0 + t1) / 2)} of ${at(dur)}` +
+      ` · ${fmtPct(pctOf(v, D.peak))} of the peak</span>` + (hasPeak ? `<br>The peak happened here.` : ""));
+  };
+  svg.onpointerleave = off;
+  svg.onpointercancel = off;
 }
 
 // ---- tabs ----
@@ -573,7 +778,7 @@ function drawTabs() {
 }
 
 // ---- owners: who allocated the memory in this view ----
-function drawOwners(root) {
+function ownerTotals(root) {
   const by = Object.fromEntries(OWNER_ORDER.map(o => [o, 0]));
   const libs = new Map();
   // Walk the parts of every node, counting only what was allocated in it.
@@ -593,6 +798,10 @@ function drawOwners(root) {
     if (o === "lib") libs.set(frameInfo(id).pkg, (libs.get(frameInfo(id).pkg) || 0) + v);
   };
   walk(root);
+  return { by, libs };
+}
+function drawOwners(root) {
+  const { by, libs } = ownerTotals(root);
   const total = root.total || 1;
   const present = OWNER_ORDER.filter(o => by[o] > 0);
   if (state.highlight && !by[state.highlight]) state.highlight = null;
@@ -661,7 +870,11 @@ function drawFlame(root) {
     : "Click a box to zoom into it.";
   crumbs.querySelectorAll("a").forEach(a => { a.onclick = () => zoomTo(state.zoom.slice(0, +a.dataset.z)); });
 
-  const W = el.clientWidth || 800, RH = 26, GAP = 2;
+  // Boxes narrower than MIN_BOX share an "N more" box; boxes narrower than
+  // MIN_SPLIT (5% of the width) are not split further until zoomed into, so
+  // small deep call chains (imports, say) don't trail off into a tower of
+  // unreadable slivers. The call tree has every row.
+  const W = el.clientWidth || 800, RH = 26, GAP = 2, MIN_BOX = 6, MIN_SPLIT = Math.max(14, W * 0.05);
   let depth = 0;
   const frag = document.createDocumentFragment();
   const box = (cls, x, w, d, key, label, value, tipHtml) => {
@@ -671,7 +884,9 @@ function drawFlame(root) {
     div.dataset.k = key;
     div.style.left = x + "px";
     div.style.top = d * RH + "px";
-    div.style.width = Math.max(1, w - GAP) + "px";
+    const bw = Math.max(1, w - GAP);
+    div.style.width = bw + "px";
+    if (bw < 10) div.style.borderRadius = Math.max(1, bw / 3) + "px";
     if (w > 24) div.innerHTML = `${esc(label)}${w > 90 ? `<span class="val">${esc(value)}</span>` : ""}`;
     div.onmousemove = e => showTip(e, tipHtml());
     div.onmouseleave = hideTip;
@@ -682,9 +897,11 @@ function drawFlame(root) {
   const place = (p, parent, x, w, d, key, path) => {
     if (p.node) {
       const o = ownerOf(p.node.id);
-      const b = box(o + off(o), x, w, d, key, frameLabel(p.node.id), fmt(p.total), () => tipFor(p, parent, root.total));
+      const split = w >= MIN_SPLIT, hidden = !split && parts(p.node).length > 0;
+      const b = box(o + off(o), x, w, d, key, frameLabel(p.node.id), fmt(p.total),
+        () => tipFor(p, parent, root.total) + (hidden ? `<br><span class="loc">Click to see what it called</span>` : ""));
       b.onclick = () => zoomTo(path);
-      placeParts(p.node, x, w, d + 1, key, path);
+      if (split) placeParts(p.node, x, w, d + 1, key, path);
     } else {
       box(`${p.owner} here${off(p.owner)}`, x, w, d, key, hereLabel(p, parent), fmt(p.total), () => tipFor(p, parent, root.total));
     }
@@ -695,11 +912,11 @@ function drawFlame(root) {
     let cx = x, restN = 0, rest = 0;
     for (const p of parts(node)) {
       const pw = w * p.total / node.total;
-      if (pw < 4) { restN++; rest += p.total; continue; }
+      if (pw < MIN_BOX) { restN++; rest += p.total; continue; }
       place(p, node, cx, pw, d, partKey(key, p), p.node ? [...path, p.node.id] : path);
       cx += pw;
     }
-    if (restN) {
+    if (restN && x + w - cx >= 2) {
       const more = { more: restN, total: rest };
       box("other more", cx, x + w - cx, d, `${key}/more`, `${fmtCount(restN)} more`, fmt(rest), () => tipFor(more, node, root.total));
     }

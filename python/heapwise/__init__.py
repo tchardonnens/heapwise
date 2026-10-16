@@ -53,13 +53,13 @@ def default_exclude() -> list[str]:
     return sorted(p for p in prefixes if p)
 
 
-def write_html(capture: Capture, path, title: str = "heapwise", exclude=None, cwd=None, notes=None) -> str:
+def write_html(capture: Capture, path, title: str = "heapwise", exclude=None, cwd=None, notes=None, rss=None) -> str:
     """Write a self-contained HTML report (flame graph, call tree, timeline)."""
     # Imported here so that ``import heapwise`` doesn't pull json etc. into
     # the program being measured.
     from .html import write_html as _write
 
-    return _write(capture, path, title, exclude, cwd, notes)
+    return _write(capture, path, title, exclude, cwd, notes, rss)
 
 
 @contextlib.contextmanager

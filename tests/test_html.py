@@ -60,7 +60,7 @@ def test_write_html_is_self_contained(tmp_path):
 
 def test_html_flag_sets_the_report_path(tmp_path):
     script = tmp_path / "job.py"
-    script.write_text("def f():\n    return [bytearray(1 << 16) for _ in range(8)]\nx = f()\n")
+    script.write_text("def f():\n    return [bytearray(1 << 20) for _ in range(8)]\nx = f()\n")
     proc = subprocess.run(
         [sys.executable, "-m", "heapwise", "run", "--exact", "--html", "out.html", str(script)],
         capture_output=True,
@@ -71,7 +71,10 @@ def test_html_flag_sets_the_report_path(tmp_path):
     assert "out.html" in proc.stderr
     data = _page_data(tmp_path / "out.html")
     assert data["title"] == "job.py"
-    assert data["findings"][0].startswith("Peak")
+    assert data["peak"] >= 8 << 20
+    func, path, line, size, count, native, kind, pkg = data["top"]["peak"]
+    assert (func, path, kind) == ("f", "job.py", "mine") and size >= 8 << 20
+    assert data["allocations"] >= 8 and data["allocated"] >= size
 
 
 def test_cli_writes_report_by_default_and_skips_with_flag(tmp_path):

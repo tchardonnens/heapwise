@@ -53,18 +53,16 @@ def _run(args: argparse.Namespace) -> int:
 
     cwd = os.getcwd()
     report = capture.summary(title, exclude, cwd, args.top)
-    notes = []
     rss = _peak_rss()
     if rss:
-        notes.append(f"Process peak RSS {format_bytes(rss)} (includes the interpreter and memory heapwise cannot see yet).")
-        report += f"\n{notes[-1]}\n"
+        report += f"\nProcess peak RSS {format_bytes(rss)} (includes the interpreter and memory heapwise cannot see yet).\n"
     if args.html != "":
         from .html import write_html
 
         stem = args.target.replace(".", "_") if args.module else os.path.splitext(title)[0]
         path = args.html or f"heapwise-{stem}.html"
         try:
-            write_html(capture, path, title, exclude, cwd, notes)
+            write_html(capture, path, title, exclude, cwd, rss=rss)
             report += f"\nFlame graph and call tree: {_link(os.path.abspath(path))}\n"
         except OSError as exc:
             report += f"\nCould not write the HTML report to {path}: {exc.strerror}\n"

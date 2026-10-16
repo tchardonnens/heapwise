@@ -25,11 +25,16 @@ The same run also writes `heapwise-<script>.html`, one self-contained file
 that works offline. Here it is for [`examples/pipeline.py`](examples/pipeline.py)
 (`heapwise run --exact examples/pipeline.py`):
 
-![heapwise report: findings, memory over time, and a cascade of what was using memory at the peak](docs/images/report-overview.png)
+![heapwise report: key numbers, memory over time, and a cascade of what was using memory at the peak](docs/images/report-overview.png)
+
+The tiles at the top give the key numbers: the peak and who held it, the
+biggest single site, what was left at exit, temporaries and total churn.
+Click a tile to jump to its cascade, and hover the memory chart for the value
+at any moment.
 
 Read the cascade top to bottom. Each box is a function, as wide as the memory
 it accounts for, and it splits exactly into the functions it called plus what
-it allocated itself (the striped boxes). Color says who allocated the memory:
+it allocated itself (the lighter boxes). Color says who allocated the memory:
 blue for your code, orange for third-party libraries, gray for the standard
 library and green for C code such as numpy's buffers. The bar above it gives
 the same split in numbers; click an owner to highlight its boxes. Peak, Leaks

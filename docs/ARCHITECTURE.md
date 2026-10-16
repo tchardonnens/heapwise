@@ -153,16 +153,20 @@ Memory over time  ▁▂▂▂▃▃▃▃▄▄▄▅▅▅▆▆▆▇▇▇�
 Process RSS is printed as context only, never attributed to lines (don't #1).
 
 The same run also writes `heapwise-<script>.html` (`python/heapwise/html.py`,
-do #14): one self-contained file, no network, with the findings, a memory
-timeline, and for each of Peak / Leaks / Temporaries an owner split, a cascade
+do #14): one self-contained file, no network, with tiles for the key
+numbers (peak and its owner split, biggest site, left at exit, temporaries,
+total allocated), a memory timeline with round-number axes and a hover
+readout, and for each of Peak / Leaks / Temporaries an owner split, a cascade
 (icicle) and a call tree.
 
 - **Cascade.** Row 0 is the whole view; each box is one function (frames on
   different lines of the same function are merged) and splits exactly into
   its callees plus what it allocated itself: Python objects ("allocated
-  directly", striped) and C allocations made while it ran ("C code called
+  directly", a lighter tint of the owner's color) and C allocations made while it ran ("C code called
   in", from the native byte counts). So every box is as wide as the boxes
-  under it put together; children too narrow to draw share one "N more" box.
+  under it put together; children under 6 px share one "N more" box, and
+  boxes under 5% of the width are not split further until zoomed into, so
+  deep chains of small frames don't trail off into slivers.
   Clicking zooms; the call tree shows the same parts as rows.
 - **Color means owner and nothing else**: your code, third-party libraries,
   stdlib, C code, Python internals. The owner hues are the first three
