@@ -1,8 +1,9 @@
-//! Cheap event recording on the allocation path.
+//! Cheap recording on the allocation path.
 //!
-//! Following heaptrack: record each event with as little work as possible and
-//! leave all aggregation (peak, leaks, temporaries) and symbolization (names,
-//! line numbers) to analysis time.
+//! Each event does O(1) work: intern the stack, update the live map and the
+//! online ledger (peak, live-at-peak, timeline). Nothing grows with the
+//! number of events, so long runs cost no more memory than short ones.
+//! Symbolization (names, line numbers) waits until the end.
 
 use std::collections::HashMap;
 
@@ -12,7 +13,8 @@ use std::time::Instant;
 
 use pyo3::ffi;
 
-use crate::analysis::{Agg, Capture, Event, Frame};
+use crate::analysis::{Capture, Frame};
+use crate::ledger::Ledger;
 
 struct State {
     start: Instant,
@@ -26,8 +28,9 @@ struct State {
     stack_ids: FxHashMap<(u32, u32), u32>,
     stack_nodes: Vec<(u32, u32)>,
     live: FxHashMap<usize, (u64, u32, bool)>,
-    events: Vec<Event>,
-    ticks: Vec<(usize, u64)>,
+    ledger: Ledger,
+    events: u64,
+    now_ns: u64,
     temporaries: FxHashMap<u32, u64>,
     alloc_count: u64,
     alloc_bytes: u64,
@@ -37,20 +40,22 @@ impl State {
     fn push_alloc(&mut self, addr: usize, bytes: u64, stack: u32, native: bool) {
         if let Some((old_bytes, old_stack, old_native)) = self.live.insert(addr, (bytes, stack, native)) {
             // A free we never saw (e.g. memory released inside libc).
-            self.events.push(Event { delta: -(old_bytes as i64), stack: old_stack, native: old_native });
+            self.ledger.apply(old_stack, -(old_bytes as i64), old_native, self.now_ns);
         }
-        self.events.push(Event { delta: bytes as i64, stack, native });
+        self.ledger.apply(stack, bytes as i64, native, self.now_ns);
         self.alloc_count += 1;
         self.alloc_bytes += bytes;
     }
 
-    /// Read the clock only every 64 events; analysis interpolates between.
+    /// Read the clock only every 64 events; times in between take the
+    /// last reading.
     #[inline]
     fn tick(&mut self) {
-        let n = self.events.len();
-        if n.is_multiple_of(64) {
-            self.ticks.push((n, self.start.elapsed().as_nanos() as u64));
+        if self.events.is_multiple_of(64) {
+            self.now_ns = self.start.elapsed().as_nanos() as u64;
+            self.ledger.timeline.flush(self.now_ns);
         }
+        self.events += 1;
     }
 }
 
@@ -69,8 +74,9 @@ pub fn begin() {
         stack_ids: FxHashMap::default(),
         stack_nodes: vec![(0, u32::MAX)],
         live: FxHashMap::default(),
-        events: Vec::with_capacity(1 << 16),
-        ticks: Vec::new(),
+        ledger: Ledger::default(),
+        events: 0,
+        now_ns: 0,
         temporaries: FxHashMap::default(),
         alloc_count: 0,
         alloc_bytes: 0,
@@ -171,7 +177,7 @@ pub fn record_free(addr: usize, temporary: bool) {
     let Some(st) = guard.as_mut() else { return };
     if let Some((bytes, stack, native)) = st.live.remove(&addr) {
         st.tick();
-        st.events.push(Event { delta: -(bytes as i64), stack, native });
+        st.ledger.apply(stack, -(bytes as i64), native, st.now_ns);
         if temporary {
             *st.temporaries.entry(stack).or_insert(0) += 1;
         }
@@ -183,7 +189,7 @@ pub fn record_free(addr: usize, temporary: bool) {
 pub unsafe fn finish(sample_rate: u64, native_supported: bool) -> Option<Capture> {
     let mut st = lock(&STATE).take()?;
     let end = st.start.elapsed().as_nanos() as u64;
-    st.ticks.push((st.events.len(), end));
+    st.ledger.timeline.flush(end);
 
     let mut names: HashMap<usize, (String, String)> = HashMap::new();
     for &code in &st.codes {
@@ -203,38 +209,22 @@ pub unsafe fn finish(sample_rate: u64, native_supported: bool) -> Option<Capture
         ffi::Py_DECREF(code as *mut ffi::PyObject);
     }
 
-    // Innermost-first frame lists; a node's parent always has a lower index.
-    let mut stacks: Vec<Vec<u32>> = Vec::with_capacity(st.stack_nodes.len());
-    for (i, &(parent, frame)) in st.stack_nodes.iter().enumerate() {
-        if i == 0 {
-            stacks.push(Vec::new());
-            continue;
-        }
-        let mut v = Vec::with_capacity(stacks[parent as usize].len() + 1);
-        v.push(frame);
-        v.extend_from_slice(&stacks[parent as usize]);
-        stacks.push(v);
-    }
-
-    let mut live_by_stack: HashMap<u32, Agg> = HashMap::new();
-    for &(bytes, stack, native) in st.live.values() {
-        let e = live_by_stack.entry(stack).or_default();
-        e.bytes += bytes;
-        e.native_bytes += if native { bytes } else { 0 };
-        e.count += 1;
-    }
-
-    Some(Capture::new(
+    let peak_by_stack = st.ledger.at_peak();
+    let peak_native_bytes = peak_by_stack.values().map(|a| a.native_bytes).sum();
+    Some(Capture {
         frames,
-        stacks,
-        st.events,
-        st.ticks,
-        live_by_stack,
-        st.temporaries.into_iter().collect(),
-        end,
-        st.alloc_count,
-        st.alloc_bytes,
+        nodes: st.stack_nodes,
+        live_at_end: st.ledger.live_now(),
+        temporaries: st.temporaries.into_iter().collect(),
+        duration_ns: end,
+        alloc_count: st.alloc_count,
+        alloc_bytes: st.alloc_bytes,
         sample_rate,
+        peak_bytes: st.ledger.peak_bytes(),
+        peak_t_ns: st.ledger.peak_t_ns(),
+        peak_native_bytes,
+        peak_by_stack,
+        timeline: st.ledger.timeline,
         native_supported,
-    ))
+    })
 }

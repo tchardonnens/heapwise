@@ -1,3 +1,4 @@
+import re
 import subprocess
 import sys
 import textwrap
@@ -47,4 +48,7 @@ def test_cli_runs_script_and_reports(tmp_path):
     )
     assert proc.returncode == 3
     assert "build() at app.py:5" in proc.stderr
-    assert "Peak 20." in proc.stderr
+    # 20 MiB from build() plus whatever the interpreter needs to load the
+    # script, which differs a little by platform.
+    peak = re.search(r"Peak ([\d.]+) MiB", proc.stderr)
+    assert peak and 20 <= float(peak.group(1)) < 22, proc.stderr

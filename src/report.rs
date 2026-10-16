@@ -2,7 +2,7 @@
 
 use std::fmt::Write;
 
-use crate::analysis::{Capture, SiteRow};
+use crate::analysis::{Capture, SiteRow, NO_STACK};
 
 pub fn human_bytes(n: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
@@ -42,11 +42,26 @@ fn location(r: &SiteRow, cwd: Option<&str>) -> String {
 /// "load_rows() at etl.py:7", or a plain description when there is no
 /// Python frame (library-owned threads, or calls that released the GIL).
 fn culprit(r: &SiteRow, cwd: Option<&str>) -> String {
-    if r.file.is_empty() {
+    if r.func == NO_STACK {
         "native code with no Python stack (a library's own threads, or a call that released the GIL)".into()
+    } else if r.file.is_empty() {
+        format!("{} (the interpreter loading your script)", r.func)
     } else {
         format!("{}() at {}", r.func, location(r, cwd))
     }
+}
+
+/// 1049111 -> "1,049,111".
+fn grouped(n: u64) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
 }
 
 fn sparkline(values: &[u64]) -> String {
@@ -125,9 +140,9 @@ pub fn summary(cap: &Capture, title: &str, exclude: &[String], cwd: Option<&str>
         let _ = writeln!(
             out,
             "{} temporary allocations (freed right after being made); {} made {}.",
-            total,
+            grouped(total),
             culprit(r, cwd),
-            r.count
+            grouped(r.count)
         );
     }
     let tl = cap.timeline_values(48);
@@ -159,7 +174,7 @@ pub fn summary(cap: &Capture, title: &str, exclude: &[String], cwd: Option<&str>
                     location(r, cwd),
                 );
             } else {
-                let _ = writeln!(out, "  {:>8}×  {:<width$}  {}", r.count, func, location(r, cwd));
+                let _ = writeln!(out, "  {:>10}×  {:<width$}  {}", grouped(r.count), func, location(r, cwd));
             }
         }
     };

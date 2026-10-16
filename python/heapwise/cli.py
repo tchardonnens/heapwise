@@ -51,12 +51,29 @@ def _run(args: argparse.Namespace) -> int:
     finally:
         capture = stop()
 
-    report = capture.summary(title, exclude, os.getcwd(), args.top)
+    cwd = os.getcwd()
+    report = capture.summary(title, exclude, cwd, args.top)
     rss = _peak_rss()
     if rss:
         report += f"\nProcess peak RSS {format_bytes(rss)} (includes the interpreter and memory heapwise cannot see yet).\n"
+    if args.html != "":
+        from .html import write_html
+
+        stem = args.target.replace(".", "_") if args.module else os.path.splitext(title)[0]
+        path = args.html or f"heapwise-{stem}.html"
+        try:
+            write_html(capture, path, title, exclude, cwd, rss=rss)
+            report += f"\nFlame graph and call tree: {_link(os.path.abspath(path))}\n"
+        except OSError as exc:
+            report += f"\nCould not write the HTML report to {path}: {exc.strerror}\n"
     print("\n" + report, file=sys.stderr, end="")
     return code
+
+
+def _link(path: str) -> str:
+    from pathlib import Path
+
+    return Path(path).as_uri()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -68,6 +85,13 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--exact", action="store_true", help="record every allocation (slower; counts temporaries)")
     run.add_argument("--rate", default=str(DEFAULT_SAMPLE_RATE), help="mean bytes between samples (default 32KiB)")
     run.add_argument("--top", type=int, default=5, help="rows per view")
+    run.add_argument(
+        "--html",
+        metavar="PATH",
+        default=None,
+        help="where to write the HTML report (default heapwise-<script>.html)",
+    )
+    run.add_argument("--no-html", dest="html", action="store_const", const="", help="skip the HTML report")
     run.add_argument("target", help="script path, or module name with -m")
     run.add_argument("args", nargs=argparse.REMAINDER, help="arguments passed to the program")
 

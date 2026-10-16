@@ -7,6 +7,7 @@ use pyo3::prelude::*;
 
 mod analysis;
 mod hooks;
+mod ledger;
 mod native;
 mod recorder;
 mod report;
@@ -63,5 +64,6 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(is_recording, m)?)?;
     m.add_function(wrap_pyfunction!(format_bytes, m)?)?;
     m.add_class::<Capture>()?;
+    m.add("MAX_STACK_DEPTH", hooks::MAX_DEPTH)?;
     Ok(())
 }
