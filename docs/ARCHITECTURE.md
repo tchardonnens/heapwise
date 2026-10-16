@@ -167,6 +167,9 @@ readout, and for each of Peak / Leaks / Temporaries an owner split, a cascade
   under it put together; children under 6 px share one "N more" box, and
   boxes under 5% of the width are not split further until zoomed into, so
   deep chains of small frames don't trail off into slivers.
+  A Width control stretches the cascade up to 32x inside a horizontal
+  scroller (phones start at a 560 px minimum); labels of boxes wider than
+  the view stay in sight while scrolling.
   Clicking zooms; the call tree shows the same parts as rows.
 - **Color means owner and nothing else**: your code, third-party libraries,
   stdlib, C code, Python internals. The owner hues are the first three

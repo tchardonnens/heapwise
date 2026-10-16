@@ -310,9 +310,17 @@ label { color: var(--ink-2); font-size: 13px; cursor: pointer; user-select: none
 
 /* Cascade: one row per call depth; every box is exactly as wide as the
    boxes under it put together. */
-.crumbs { font-size: 13px; color: var(--ink-2); margin-bottom: 8px; min-height: 20px; }
+.flame-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; min-height: 26px; }
+.crumbs { font-size: 13px; color: var(--ink-2); min-width: 0; flex: 1; }
+.widths { display: inline-flex; align-items: center; gap: 2px; color: var(--ink-2); font-size: 13px; flex: none; }
+.widths .lbl { margin-right: 6px; }
+.widths button { border: 1px solid var(--ring); background: var(--surface); color: var(--ink); width: 26px; height: 26px; border-radius: 6px;
+  font: 15px/1 system-ui, -apple-system, "Segoe UI", sans-serif; cursor: pointer; padding: 0; }
+.widths button:disabled { color: var(--muted); cursor: default; }
+.widths output { min-width: 34px; text-align: center; font-variant-numeric: tabular-nums; }
+.flame-scroll { overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: thin; padding-bottom: 6px; }
 .crumbs a { color: var(--ink); cursor: pointer; text-decoration: underline; text-decoration-color: var(--axis); text-underline-offset: 3px; }
-#flame { position: relative; width: 100%; overflow: hidden; }
+#flame { position: relative; overflow: hidden; }
 .box { position: absolute; height: 24px; padding: 0 6px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
   font: 12px/24px system-ui, -apple-system, "Segoe UI", sans-serif; border-radius: 4px; cursor: pointer; }
 .box .val { opacity: 0.8; margin-left: 6px; font-variant-numeric: tabular-nums; }
@@ -392,8 +400,16 @@ tr.leave td > .c { animation: row-out 150ms ease-in both; }
     <p class="hint" id="view-hint"></p>
     <div class="split" id="split" aria-hidden="true"></div>
     <div class="owners" id="owners"></div>
-    <div class="crumbs" id="crumbs"></div>
-    <div id="flame"></div>
+    <div class="flame-bar">
+      <div class="crumbs" id="crumbs"></div>
+      <div class="widths" role="group" aria-label="Cascade width">
+        <span class="lbl">Width</span>
+        <button type="button" id="narrower" aria-label="Narrower" title="Narrower">−</button>
+        <output id="scale">1×</output>
+        <button type="button" id="wider" aria-label="Wider" title="Wider, then scroll sideways">+</button>
+      </div>
+    </div>
+    <div class="flame-scroll" id="flame-scroll"><div id="flame"></div></div>
   </div>
 
   <div class="panel" id="p-tree">
@@ -441,7 +457,8 @@ const pctOf = (v, whole) => whole ? 100 * v / whole : 0;
 const fmtPct = p => p >= 10 ? `${p.toFixed(0)}%` : p >= 0.1 ? `${p.toFixed(1)}%` : p > 0 ? "<0.1%" : "0%";
 const reduceMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-let state = { view: "peak", group: true, zoom: [], highlight: null };
+let state = { view: "peak", group: true, zoom: [], highlight: null, scale: 1 };
+const SCALES = [1, 2, 4, 8, 16, 32];
 
 // ---- frames and who owns them ----
 function fileOf(id) { return D.files[D.frames[id][1]]; }  // [path, kind, package]
@@ -864,18 +881,23 @@ function drawFlame(root) {
   }
   let focus = nodeAt(root, state.zoom);
   if (!focus) { state.zoom = []; focus = root; }
-  const zoomTo = z => { state.zoom = z; animateZoom = true; hideTip(); render(); };
+  const zoomTo = z => { state.zoom = z; animateZoom = true; hideTip(); render(); document.getElementById("flame-scroll").scrollLeft = 0; stickLabels(); };
   crumbs.innerHTML = state.zoom.length
     ? `<a data-z="0">${esc(VIEWS[state.view].root)}</a>` +
       state.zoom.map((id, i) => ` › ${i + 1 < state.zoom.length ? `<a data-z="${i + 1}">` : "<b>"}${esc(frameLabel(id))}${i + 1 < state.zoom.length ? "</a>" : "</b>"}`).join("")
-    : "Click a box to zoom into it.";
+    : state.scale > 1 ? "Scroll sideways, or click a box to zoom into it." : "Click a box to zoom into it, or make it wider.";
   crumbs.querySelectorAll("a").forEach(a => { a.onclick = () => zoomTo(state.zoom.slice(0, +a.dataset.z)); });
 
   // Boxes narrower than MIN_BOX share an "N more" box; boxes narrower than
   // MIN_SPLIT (5% of the width) are not split further until zoomed into, so
   // small deep call chains (imports, say) don't trail off into a tower of
   // unreadable slivers. The call tree has every row.
-  const W = el.clientWidth || 800, RH = 26, GAP = 2, MIN_BOX = 6, MIN_SPLIT = Math.max(14, W * 0.05);
+  // Width: the visible width times the chosen scale (and never so narrow
+  // that a phone gets nothing readable); wider than the panel, it scrolls.
+  // MIN_SPLIT follows the visible width, so widening shows deeper calls.
+  const vis = document.getElementById("flame-scroll").clientWidth || 800;
+  const W = Math.max(vis, 560) * state.scale, RH = 26, GAP = 2, MIN_BOX = 6, MIN_SPLIT = Math.max(14, vis * 0.05);
+  el.style.width = W + "px";
   let depth = 0;
   const frag = document.createDocumentFragment();
   const box = (cls, x, w, d, key, label, value, tipHtml) => {
@@ -890,6 +912,7 @@ function drawFlame(root) {
     div.style.left = pct(x);
     div.style.top = d * RH + "px";
     div.style.width = w > GAP + 1 ? `calc(${pct(w)} - ${GAP}px)` : pct(w);
+    div._x = x; div._w = bw;
     if (bw < 16) div.classList.add("thin");  // no padding, or it would widen the box
     if (bw < 10) div.style.borderRadius = Math.max(1, bw / 3) + "px";
     if (w > 24) div.innerHTML = `${esc(label)}${w > 90 ? `<span class="val">${esc(value)}</span>` : ""}`;
@@ -935,6 +958,7 @@ function drawFlame(root) {
   else place({ node: focus, total: focus.total }, null, 0, W, 0, "root/" + state.zoom.join("/"), state.zoom.slice());
   el.appendChild(frag);
   el.style.height = depth * RH + "px";
+  stickLabels();
 
   if (before.size) {
     const boxes = [...el.querySelectorAll(".box")];
@@ -948,6 +972,40 @@ function drawFlame(root) {
     boxes.forEach((b, i) => { b.classList.add("anim"); b.classList.remove("fade"); [b.style.left, b.style.width, b.style.top] = target[i]; });
   }
 }
+
+// Boxes wider than the view keep their label in sight while scrolling.
+function stickLabels() {
+  const sc = document.getElementById("flame-scroll"), left = sc.scrollLeft;
+  for (const b of document.getElementById("flame").children) {
+    if (b._x === undefined) continue;
+    const shift = left > b._x && b._w > 120 ? Math.min(left - b._x, b._w - 120) : 0;
+    b.style.textIndent = shift ? shift + "px" : "";
+  }
+}
+let stickPending = false;
+document.getElementById("flame-scroll").addEventListener("scroll", () => {
+  if (stickPending) return;
+  stickPending = true;
+  requestAnimationFrame(() => { stickPending = false; stickLabels(); });
+});
+function setScale(next) {
+  const sc = document.getElementById("flame-scroll");
+  const vis = sc.clientWidth, oldW = document.getElementById("flame").clientWidth || vis;
+  const centre = (sc.scrollLeft + vis / 2) / oldW;  // keep what's in the middle in the middle
+  state.scale = next;
+  hideTip();
+  render();
+  sc.scrollLeft = centre * document.getElementById("flame").clientWidth - vis / 2;
+  stickLabels();
+}
+function drawWidths() {
+  const i = SCALES.indexOf(state.scale);
+  document.getElementById("scale").textContent = `${state.scale}×`;
+  document.getElementById("narrower").disabled = i <= 0;
+  document.getElementById("wider").disabled = i >= SCALES.length - 1;
+}
+document.getElementById("narrower").onclick = () => setScale(SCALES[Math.max(0, SCALES.indexOf(state.scale) - 1)]);
+document.getElementById("wider").onclick = () => setScale(SCALES[Math.min(SCALES.length - 1, SCALES.indexOf(state.scale) + 1)]);
 
 // ---- call tree: same parts as the cascade, as rows ----
 let open = new Set();
@@ -1035,6 +1093,7 @@ function render() {
     ` and what it allocated itself. ${D.sampled && v.unit === "bytes" ? "Sizes are estimated from samples. " : ""}` +
     `Colors show who allocated it.`;
   drawOwners(root);
+  drawWidths();
   drawFlame(root);
   const tk = `${state.view}/${state.group}`;
   if (tk !== lastTreeKey) { autoOpen(root); lastTreeKey = tk; }
@@ -1047,10 +1106,10 @@ addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(() => { dra
 // up as the page grows); redraw so labels match the new widths.
 let lastW = 0;
 new ResizeObserver(() => {
-  const w = document.getElementById("flame").clientWidth;
+  const w = document.getElementById("flame-scroll").clientWidth;
   if (lastW && Math.abs(w - lastW) > 1) { clearTimeout(rt); rt = setTimeout(() => { drawTimeline(); render(); }, 100); }
   lastW = w;
-}).observe(document.getElementById("flame"));
+}).observe(document.getElementById("flame-scroll"));
 drawTimeline();
 render();
 </script>
