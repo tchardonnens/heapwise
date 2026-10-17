@@ -196,7 +196,7 @@ Working today (Linux, CPython 3.13, 30 tests passing):
 - native `malloc`/`mmap` from C extensions on Linux, split out as "native"
   in the report
 - sampling (default) and `--exact`
-- Peak, Leaks, Temporaries views, timeline sparkline, findings-first summary
+- Peak, Leaks, Temporaries views; short terminal summary (peak, at exit, top site)
 - `limit_memory` pytest marker
 - CI builds wheels for Linux, musllinux, macOS and Windows and runs the tests
 

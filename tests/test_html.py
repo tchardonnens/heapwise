@@ -87,7 +87,7 @@ def test_cli_writes_report_by_default_and_skips_with_flag(tmp_path):
     assert not (tmp_path / "heapwise-app.html").exists()
     proc = run()
     assert (tmp_path / "heapwise-app.html").exists()
-    assert "Flame graph and call tree: file://" in proc.stderr
+    assert "Report   file://" in proc.stderr
     # Sampled runs don't count temporaries, so that tab is off.
     assert _page_data(tmp_path / "heapwise-app.html")["views"]["temporaries"] is None
 

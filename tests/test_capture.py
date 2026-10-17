@@ -95,7 +95,7 @@ def test_summary_leads_with_the_peak():
         blocks = allocate_blocks(10, 512 * 1024)
         del blocks
     text = result[0].summary("test", [], None, 3)
-    assert text.splitlines()[2].startswith("Peak 5.")
+    assert text.splitlines()[1].startswith("Peak     5.")
     assert "allocate_blocks" in text
 
 

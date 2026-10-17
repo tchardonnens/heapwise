@@ -7,7 +7,7 @@ import os
 import runpy
 import sys
 
-from . import DEFAULT_SAMPLE_RATE, default_exclude, format_bytes, parse_size, start, stop
+from . import DEFAULT_SAMPLE_RATE, default_exclude, parse_size, start, stop
 
 
 def _peak_rss() -> int | None:
@@ -54,8 +54,6 @@ def _run(args: argparse.Namespace) -> int:
     cwd = os.getcwd()
     report = capture.summary(title, exclude, cwd, args.top)
     rss = _peak_rss()
-    if rss:
-        report += f"\nProcess peak RSS {format_bytes(rss)} (includes the interpreter and memory heapwise cannot see yet).\n"
     if args.html != "":
         from .html import write_html
 
@@ -63,9 +61,9 @@ def _run(args: argparse.Namespace) -> int:
         path = args.html or f"heapwise-{stem}.html"
         try:
             write_html(capture, path, title, exclude, cwd, rss=rss)
-            report += f"\nFlame graph and call tree: {_link(os.path.abspath(path))}\n"
+            report += f"Report   {_link(os.path.abspath(path))}\n"
         except OSError as exc:
-            report += f"\nCould not write the HTML report to {path}: {exc.strerror}\n"
+            report += f"Could not write the HTML report to {path}: {exc.strerror}\n"
     print("\n" + report, file=sys.stderr, end="")
     return code
 
@@ -84,7 +82,7 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("-m", dest="module", action="store_true", help="run a library module as a script")
     run.add_argument("--exact", action="store_true", help="record every allocation (slower; counts temporaries)")
     run.add_argument("--rate", default=str(DEFAULT_SAMPLE_RATE), help="mean bytes between samples (default 32KiB)")
-    run.add_argument("--top", type=int, default=5, help="rows per view")
+    run.add_argument("--top", type=int, default=1, help="how many of the biggest sites to list")
     run.add_argument(
         "--html",
         metavar="PATH",

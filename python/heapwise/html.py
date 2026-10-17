@@ -85,8 +85,7 @@ def report_data(
 ) -> dict:
     """Everything the page needs, as plain JSON-able data."""
     exclude = list(exclude or [])
-    summary = capture.summary(title, exclude, cwd, 5).splitlines()
-    header = summary[0] if summary else title
+    header = capture.header(title)
     # The capture keys frames by bytecode offset; the page shows lines, so
     # frames on the same line of the same function become one. File names
     # are listed once and referred to by index.
