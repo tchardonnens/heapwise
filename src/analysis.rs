@@ -276,7 +276,12 @@ impl Capture {
         self.timeline_values(buckets)
     }
 
-    /// Findings-first plain-text report.
+    /// One-line title: script, duration, sampling mode and coverage.
+    fn header(&self, title: &str) -> String {
+        crate::report::header(self, title)
+    }
+
+    /// Short plain-text report: peak, at exit, top sites.
     #[pyo3(signature = (title, exclude = Vec::new(), cwd = None, top = 5))]
     fn summary(&self, title: &str, exclude: Vec<String>, cwd: Option<String>, top: usize) -> String {
         crate::report::summary(self, title, &exclude, cwd.as_deref(), top)
