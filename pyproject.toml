@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "heapwise"
-version = "0.1.0"
+version = "0.1.1"
 description = "A Python memory profiler that tells you what is using your memory, and why it is still alive."
 readme = "README.md"
 requires-python = ">=3.12"
